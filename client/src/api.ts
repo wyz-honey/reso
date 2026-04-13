@@ -2,6 +2,25 @@ async function parseJson(r: Response): Promise<Record<string, unknown>> {
   return r.json().catch(() => ({})) as Promise<Record<string, unknown>>;
 }
 
+function normalizeParagraphCount(raw: unknown): number {
+  if (raw == null) return 0;
+  if (typeof raw === 'number' && !Number.isNaN(raw)) return Math.max(0, Math.floor(raw));
+  if (typeof raw === 'bigint') return Number(raw) || 0;
+  if (typeof raw === 'string' && raw.trim()) {
+    const n = Number(raw.trim());
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  }
+  return 0;
+}
+
+function normalizeSessionListItem(row: Record<string, unknown>): Record<string, unknown> {
+  const pc = row.paragraph_count ?? row.paragraphCount;
+  return {
+    ...row,
+    paragraph_count: normalizeParagraphCount(pc),
+  };
+}
+
 export async function apiCreateSession(): Promise<string> {
   const r = await fetch('/api/sessions', { method: 'POST' });
   const data = await parseJson(r);
@@ -38,9 +57,10 @@ export async function fetchSessionList(params: Record<string, unknown> = {}) {
   const r = await fetch(qs ? `/api/sessions?${qs}` : '/api/sessions');
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `加载会话列表失败 (${r.status})`));
+  const rawSessions = Array.isArray(data.sessions) ? (data.sessions as Record<string, unknown>[]) : [];
   return {
-    sessions: (data.sessions as unknown[]) || [],
-    total: typeof data.total === 'number' ? data.total : ((data.sessions as unknown[]) || []).length,
+    sessions: rawSessions.map(normalizeSessionListItem),
+    total: typeof data.total === 'number' ? data.total : rawSessions.length,
     page: (data.page as number) || 1,
     pageSize: (data.pageSize as number) || 10,
   };

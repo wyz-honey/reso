@@ -12,17 +12,17 @@ import { listQuickInputs } from '~/services/quickInputService.ts';
 async function main(): Promise<void> {
   const pool = createPool();
   if (!pool) {
-    console.error('FAIL: no pool — set OPC_PG_HOST (and user/password) in repo root .env');
+    console.error('FAIL: no pool — set PG_HOST (and user/password) in repo root .env');
     process.exit(1);
   }
 
   const db = createDb(pool);
-  const dbName = process.env.OPC_PG_DATABASE || process.env.OPC_PM_DATABASE || 'reso';
+  const dbName = process.env.PG_DATABASE || process.env.PM_DATABASE || 'reso';
 
   console.log('--- reso DB probe ---');
-  console.log('host:', process.env.OPC_PG_HOST);
+  console.log('host:', process.env.PG_HOST);
   console.log('database:', dbName);
-  console.log('user:', process.env.OPC_PG_USER);
+  console.log('user:', process.env.PG_USER);
 
   try {
     const [sc] = await db.select({ c: count() }).from(sessions);

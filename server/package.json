@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "dev:node": "tsx watch src/index.ts",
-    "start:node": "tsx src/index.ts",
+    "dev": "bun --watch ./src/index.ts",
+    "start": "bun ./src/index.ts",
     "typecheck": "tsc --noEmit",
     "test-db": "bun scripts/test-db.ts"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -25,7 +26,6 @@
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
     "bun-types": "^1.1.14",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

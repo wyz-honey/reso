@@ -6,6 +6,11 @@ import { paragraphs, sessions } from '~/database/schema.ts';
 import { AppError } from '~/utils/appError.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 
+/** 列表批量查段落时用 Map 键，避免 driver 在 uuid 上返回类型不一致导致 get 不到 */
+function sessionIdKey(id: unknown): string {
+  return String(id ?? '').trim().toLowerCase();
+}
+
 function clipSessionText(s: string, max: number): string {
   const t = s.trim();
   if (!t) return '';
@@ -30,7 +35,6 @@ export async function listSessions(
 ) {
   const { q, filter, page, pageSize } = opts;
   const offset = (page - 1) * pageSize;
-  /** 勿用 `alias(sessions,'s')`：标量子查询里 `${s.id}` 与外层关联在部分驱动下会错，导致段数、摘要恒空 */
   const conditions: SQL[] = [];
 
   if (filter === 'with') {
@@ -67,61 +71,64 @@ export async function listSessions(
   const total = Number(countRow?.c ?? 0);
 
   /**
-   * 段数用 JOIN 聚合（避免失效的关联标量子查询）。
-   * 子查询里的聚合必须用 `.as('cnt')`：否则 Drizzle 不允许外层引用 `paragraphCounts.cnt`，段数会一直是空/0。
+   * 列表与详情拆开查：单条 SQL 里对 `sessions` 做关联子查询 / 复杂 JOIN 时，部分环境下段数与「最新一段」会整表落空（列表全 0、无摘要），详情 `WHERE session_id = $1` 仍正常。
+   * 这里只取当前页 session id，再用 `IN (...)` 批量拉段落统计与最新正文，在内存里合并。
    */
-  const paragraphCounts = db
-    .select({
-      sessionId: paragraphs.sessionId,
-      cnt: count(paragraphs.id).as('cnt'),
-    })
-    .from(paragraphs)
-    .groupBy(paragraphs.sessionId)
-    .as('paragraph_counts');
-
-  const rows = await db
+  const sessionRows = await db
     .select({
       id: sessions.id,
       created_at: sessions.createdAt,
-      paragraph_count: paragraphCounts.cnt,
-      list_title_raw: sql<string>`(
-        SELECT trim(both FROM split_part(COALESCE(trim(${paragraphs.content}), ''), E'\n', 1))
-        FROM ${paragraphs}
-        WHERE ${paragraphs.sessionId} = ${sessions.id}
-        ORDER BY ${paragraphs.createdAt} DESC
-        LIMIT 1
-      )`,
-      preview_raw: sql<string>`(
-        SELECT left(trim(COALESCE(${paragraphs.content}, '')), 220)
-        FROM ${paragraphs}
-        WHERE ${paragraphs.sessionId} = ${sessions.id}
-        ORDER BY ${paragraphs.createdAt} DESC
-        LIMIT 1
-      )`,
     })
     .from(sessions)
-    .leftJoin(paragraphCounts, eq(paragraphCounts.sessionId, sessions.id))
     .where(whereClause)
     .orderBy(desc(sessions.createdAt))
     .limit(pageSize)
     .offset(offset);
 
-  const sessionList = rows.map((r) => {
-    const pc = r.paragraph_count;
-    const paragraphCount =
-      pc == null
-        ? 0
-        : typeof pc === 'bigint'
-          ? Number(pc)
-          : typeof pc === 'number' && !Number.isNaN(pc)
-            ? pc
-            : Number(pc) || 0;
+  const ids = sessionRows.map((r) => String(r.id).trim()).filter(isValidUuid);
+  if (ids.length === 0) {
+    return { sessions: [], total, page, pageSize };
+  }
+
+  /**
+   * 与详情页同构的 Drizzle 查询（按 session 单条 `eq`），避免批量 SQL 在部分环境下匹配不到行。
+   * 顺序执行，减轻连接池压力；每页最多 50 条 ≈ 100 次往返，可接受。
+   */
+  const countMap = new Map<string, number>();
+  const latestContentBySession = new Map<string, string>();
+  for (const sid of ids) {
+    const key = sessionIdKey(sid);
+    const [cntRow] = await db
+      .select({ c: count() })
+      .from(paragraphs)
+      .where(eq(paragraphs.sessionId, sid));
+    const [latestRow] = await db
+      .select({ content: paragraphs.content })
+      .from(paragraphs)
+      .where(eq(paragraphs.sessionId, sid))
+      .orderBy(desc(paragraphs.createdAt))
+      .limit(1);
+    countMap.set(key, Number(cntRow?.c ?? 0));
+    latestContentBySession.set(key, String(latestRow?.content ?? ''));
+  }
+
+  const firstLine = (content: string): string => {
+    const t = content.trim();
+    if (!t) return '';
+    const n = t.indexOf('\n');
+    return (n === -1 ? t : t.slice(0, n)).trim();
+  };
+
+  const sessionList = sessionRows.map((r) => {
+    const key = sessionIdKey(r.id);
+    const paragraphCount = countMap.get(key) ?? 0;
+    const latestContent = latestContentBySession.get(key) ?? '';
     return {
       id: r.id,
       created_at: r.created_at,
       paragraph_count: paragraphCount,
-      list_title: clipSessionText(String(r.list_title_raw ?? ''), 64),
-      preview: clipSessionText(String(r.preview_raw ?? ''), 200),
+      list_title: clipSessionText(firstLine(latestContent), 64),
+      preview: clipSessionText(latestContent.trim(), 200),
     };
   });
 

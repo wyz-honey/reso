@@ -32,7 +32,7 @@
 | 层级 | 说明 |
 |------|------|
 | 前端 | React 18、Vite 6、React Router |
-| 服务端 | Node.js、Express、WebSocket（`ws`） |
+| 服务端 | **Bun 1.1+**、Express、WebSocket（`ws`） |
 | 数据 | PostgreSQL；[Drizzle ORM](https://orm.drizzle.team/) + `pg`（表结构见 `server/src/database/schema.ts`；新库可执行 `server/database/bootstrap.sql`） |
 | 语音 / 模型 | 阿里云 DashScope（ASR + Chat） |
 
@@ -40,7 +40,10 @@
 
 ## 快速开始
 
-**环境**：Node.js 18+（建议 LTS）。
+**环境**：
+
+- **Bun 1.1+**（跑 `server` 必装）：<https://bun.sh> 安装后执行 `bun upgrade` 保持最新。本机只保留 **一个** `bun` 可执行文件（`which -a bun` 若出现多条，把旧路径从 PATH 去掉或卸载旧安装，避免又指回 0.5.x）。
+- **Node.js 18+**（建议 LTS）：根目录 `npm install`、前端 Vite、并发 `npm run dev` 仍用 Node/npm。
 
 ```bash
 # 安装依赖（根目录 workspaces：server + client）
@@ -96,7 +99,7 @@ npm run test-db -w server
 | `DASHSCOPE_API_KEY` | 百炼 API Key（必填，用于 ASR 与 Agent） |
 | `PORT` | 后端 HTTP/WebSocket 端口 |
 | `DASHSCOPE_CHAT_MODEL` | 对话模型（如 `qwen-plus`） |
-| `OPC_PG_*` / `OPC_PG_DATABASE` | PostgreSQL 连接；不配则部分存库功能不可用 |
+| `PG_*` / `PG_DATABASE` | PostgreSQL 连接；不配则部分存库功能不可用 |
 
 ---
 

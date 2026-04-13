@@ -20,7 +20,7 @@ export function createQuickInputsRouter(db: AppDb | null): Router {
   r.get('/api/quick-inputs', async (_req, res) => {
     if (!db) {
       serviceWarn('quick-inputs', 'GET /api/quick-inputs rejected: no database', {
-        hint: 'set OPC_PG_HOST and credentials in .env',
+        hint: 'set PG_HOST and credentials in .env',
       });
       return res.status(503).json({ error: 'Database not configured' });
     }

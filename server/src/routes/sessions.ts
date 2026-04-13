@@ -51,7 +51,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
 
   r.post('/', async (_req, res) => {
     if (!db) {
-      return res.status(503).json({ error: 'Database not configured (set OPC_PG_*)' });
+      return res.status(503).json({ error: 'Database not configured (set PG_*)' });
     }
     try {
       const id = await createSession(db);

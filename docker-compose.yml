@@ -1,0 +1,58 @@
+# 前后端 + PostgreSQL。用法：复制 .env.example 为 .env 并填写 DASHSCOPE_API_KEY；再 make docker-up
+# 首次启动 PG 会执行 server/database/bootstrap.sql 建表（仅数据目录为空时）
+services:
+  pg:
+    image: registry.cn-hangzhou.aliyuncs.com/agentcraft/agentcraft-pg:v1
+    container_name: pg
+    restart: always
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+    networks:
+      - reso
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-reso}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reso_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-reso}
+    volumes:
+      - ./postgresql/data:/var/lib/postgresql/data
+      - ./server/database/bootstrap.sql:/docker-entrypoint-initdb.d/01-bootstrap.sql:ro
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    image: reso-server:local
+    container_name: reso-server
+    restart: always
+    ports:
+      - "${SERVER_PUBLISH_PORT:-3002}:3002"
+    networks:
+      - reso
+    depends_on:
+      - pg
+    env_file:
+      - .env
+    environment:
+      PORT: "3002"
+      PG_HOST: pg
+      PG_PORT: "5432"
+      PG_USER: ${POSTGRES_USER:-reso}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:-reso_change_me}
+      PG_DATABASE: ${POSTGRES_DB:-reso}
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: reso-web:local
+    container_name: reso-web
+    restart: always
+    ports:
+      - "${WEB_PUBLISH_PORT:-8080}:80"
+    networks:
+      - reso
+    depends_on:
+      - server
+
+networks:
+  reso:
