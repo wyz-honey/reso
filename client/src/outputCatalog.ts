@@ -170,7 +170,7 @@ export function getBuiltinOutputs() {
       updatedAt: null,
       name: 'Cursor',
       description:
-        '本机执行 `agent`：正文进 `-p`；标准输出/错误默认重定向到服务端目录 cursor/<会话ID>/info.txt 与 error.txt，工作台 WebSocket 实时展示。',
+        '本机执行 `agent`：正文进 `-p`；标准输出/错误默认重定向到服务端目录 server/outputs/cursor/<会话ID>/info.txt 与 error.txt，工作台 WebSocket 实时展示。',
       deliveryType: 'cursor_cli',
       requestUrl: '（本机）拼接 agent 指令并复制到剪贴板',
       outputShape:

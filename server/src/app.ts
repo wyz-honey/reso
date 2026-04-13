@@ -5,7 +5,7 @@ import { httpAccessLogger } from '~/middleware/httpAccessLogger.ts';
 import { createHealthRouter } from '~/routes/health.ts';
 import { createAgentRouter } from '~/routes/agent.ts';
 import { createChatRouter } from '~/routes/chat.ts';
-import { createSessionsRouter } from '~/routes/sessions.ts';
+import { createSessionsRouter, handleSessionsBatchDelete } from '~/routes/sessions.ts';
 import { createQuickInputsRouter } from '~/routes/quickInputs.ts';
 import { createCursorRouter } from '~/routes/cursor.ts';
 
@@ -18,7 +18,10 @@ export function createApp(db: AppDb | null): express.Application {
   app.use(createHealthRouter(db));
   app.use(createAgentRouter(db));
   app.use(createChatRouter(db));
-  app.use(createSessionsRouter(db));
+  app.post('/api/sessions/batch-delete', (req, res) => {
+    void handleSessionsBatchDelete(db, req, res);
+  });
+  app.use('/api/sessions', createSessionsRouter(db));
   app.use(createQuickInputsRouter(db));
   app.use(createCursorRouter());
 

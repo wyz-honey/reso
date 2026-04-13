@@ -21,6 +21,13 @@ function tsIso(v: unknown): string {
   return String(v ?? '');
 }
 
+function num(v: unknown): number {
+  if (typeof v === 'bigint') return Number(v);
+  if (typeof v === 'number' && !Number.isNaN(v)) return v;
+  const n = Number(v);
+  return Number.isNaN(n) ? 0 : n;
+}
+
 export async function listQuickInputs(db: AppDb) {
   return db
     .select({
@@ -35,43 +42,69 @@ export async function listQuickInputs(db: AppDb) {
     .orderBy(asc(quickInputs.sortOrder), asc(quickInputs.createdAt));
 }
 
-/** Drizzle 抛错时（如 tsx watch 热重载后偶发）用 Pool 直查，JSON 形状与前端一致。 */
+/** Drizzle 抛错或映射失败时，用 Pool 查 public.quick_inputs（显式 schema，避免 search_path）。 */
 export async function listQuickInputsResilient(db: AppDb): Promise<QuickInputListRow[]> {
-  try {
-    const rows = await listQuickInputs(db);
-    return rows.map((r) => ({
-      id: r.id,
-      label: r.label,
-      content: r.content,
-      sort_order: Number(r.sort_order),
+  const mapDrizzle = (
+    rows: Awaited<ReturnType<typeof listQuickInputs>>
+  ): QuickInputListRow[] =>
+    rows.map((r) => ({
+      id: String(r.id),
+      label: String(r.label ?? ''),
+      content: String(r.content ?? ''),
+      sort_order: num(r.sort_order),
       created_at: tsIso(r.created_at),
       updated_at: tsIso(r.updated_at),
     }));
+
+  const mapRaw = (rows: {
+    id: string;
+    label: string;
+    content: string;
+    sort_order: number;
+    created_at: Date;
+    updated_at: Date;
+  }[]): QuickInputListRow[] =>
+    rows.map((r) => ({
+      id: String(r.id),
+      label: String(r.label ?? ''),
+      content: String(r.content ?? ''),
+      sort_order: num(r.sort_order),
+      created_at: tsIso(r.created_at),
+      updated_at: tsIso(r.updated_at),
+    }));
+
+  let drizzleRows: Awaited<ReturnType<typeof listQuickInputs>> | null = null;
+  try {
+    drizzleRows = await listQuickInputs(db);
   } catch (e) {
     serviceWarn('quick-inputs', 'Drizzle listQuickInputs failed; using raw SQL fallback', {
       message: e instanceof Error ? e.message : String(e),
     });
-    const { rows } = await db.$client.query<{
-      id: string;
-      label: string;
-      content: string;
-      sort_order: number;
-      created_at: Date;
-      updated_at: Date;
-    }>(
-      `SELECT id, label, content, sort_order, created_at, updated_at
-       FROM quick_inputs
-       ORDER BY sort_order ASC, created_at ASC`
-    );
-    return rows.map((r) => ({
-      id: r.id,
-      label: r.label,
-      content: r.content,
-      sort_order: Number(r.sort_order),
-      created_at: tsIso(r.created_at),
-      updated_at: tsIso(r.updated_at),
-    }));
   }
+
+  if (drizzleRows != null) {
+    try {
+      return mapDrizzle(drizzleRows);
+    } catch (mapErr) {
+      serviceWarn('quick-inputs', 'Drizzle row map failed; using raw SQL fallback', {
+        message: mapErr instanceof Error ? mapErr.message : String(mapErr),
+      });
+    }
+  }
+
+  const { rows } = await db.$client.query<{
+    id: string;
+    label: string;
+    content: string;
+    sort_order: number;
+    created_at: Date;
+    updated_at: Date;
+  }>(
+    `SELECT id, label, content, sort_order, created_at, updated_at
+     FROM public.quick_inputs
+     ORDER BY sort_order ASC, created_at ASC`
+  );
+  return mapRaw(rows);
 }
 
 export async function createQuickInput(

@@ -67,6 +67,21 @@ export async function apiDeleteSession(sessionId: string) {
   return data;
 }
 
+/** `POST /api/sessions/batch-delete`，body `{ ids }`，单次最多 100 条。 */
+export async function apiBatchDeleteSessions(ids: string[]) {
+  const r = await fetch('/api/sessions/batch-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `批量删除失败 (${r.status})`));
+  return {
+    deleted: typeof data.deleted === 'number' ? data.deleted : 0,
+    ok: Boolean(data.ok),
+  };
+}
+
 export async function apiAgentChat(bodyIn: {
   messages: unknown[];
   system?: string;

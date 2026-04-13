@@ -40,6 +40,8 @@ export function splitAgentModelForUi(saved: string | undefined) {
 
 const KEY = 'reso_voice_settings_v1';
 
+const ASR_LANG_ALLOWED = new Set(['zh', 'en', 'ja', 'yue', 'ko', 'de', 'fr', 'ru']);
+
 const DEFAULTS = {
   endMode: END_MODES.phrase as EndMode,
   silenceSeconds: 5,
@@ -48,6 +50,13 @@ const DEFAULTS = {
   stopMicAfterAuto: true,
   agentModel: '',
   dashscopeApiKey: '',
+  /** 百炼 Paraformer：过滤嗯啊等语气词（服务端） */
+  asrDisfluencyRemoval: true,
+  /** 逗号/空格/换行分隔，如 zh；留空则不让服务端带 language_hints（自动语种） */
+  asrLanguageHintsText: 'zh',
+  /** 识别结果首尾再削一层口语（仅出现在开头或词长≥2 且出现在结尾时移除，避免误伤句中） */
+  oralStripEnabled: false,
+  oralStripPhrasesText: '',
 };
 
 export type VoiceSettings = typeof DEFAULTS & { endPhrases: string[]; endMode: EndMode };
@@ -56,6 +65,85 @@ function normalizePhrases(list: unknown): string[] {
   if (!Array.isArray(list)) return [...DEFAULTS.endPhrases];
   const out = list.map((s) => String(s).trim()).filter(Boolean);
   return out.length ? out : [...DEFAULTS.endPhrases];
+}
+
+function parseAsrLanguageHintsText(raw: unknown): string {
+  if (typeof raw !== 'string') return DEFAULTS.asrLanguageHintsText;
+  return raw.trim();
+}
+
+function parseOralStripPhrasesText(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw;
+}
+
+/** 解析为百炼允许的 language_hints；非法码丢弃 */
+export function getAsrLanguageHintsArray(hintsText: string): string[] {
+  const parts = String(hintsText || '')
+    .split(/[\s,，、]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const p of parts) {
+    if (ASR_LANG_ALLOWED.has(p) && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** 句首可反复削掉的单字语气（在 oralStripEnabled 时额外跑一层） */
+const ORAL_LEAD_SYLLABLES_RE = /^(嗯+|啊+|呃+|额+|欸+|诶+)[，,、\s\u3000]*/u;
+
+function oralStripPhrasesFromText(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+}
+
+/** 仅从首尾剥掉词表中的片段；尾部仅移除长度 ≥2 的词，避免「你好」被削成「你」 */
+function stripOralEdges(text: string, phrases: string[]): string {
+  let t = text;
+  let guard = 0;
+  while (guard++ < 40) {
+    let hit = false;
+    const tr = t.trimStart();
+    for (const p of phrases) {
+      if (!p) continue;
+      if (tr.startsWith(p)) {
+        t = tr.slice(p.length).replace(/^[，,、；;：:\s\u3000]+/, '');
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) break;
+  }
+  guard = 0;
+  while (guard++ < 40) {
+    let hit = false;
+    const tr = t.trimEnd();
+    for (const p of phrases) {
+      if (!p || p.length < 2) continue;
+      if (tr.endsWith(p)) {
+        t = tr.slice(0, -p.length).replace(/[，,、；;：:\s\u3000]+$/u, '');
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) break;
+  }
+  return t.trim();
+}
+
+/** 对单句/半句识别结果做口语清理（在写入编辑区前调用） */
+export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
+  let t = String(raw ?? '');
+  if (!v.oralStripEnabled) return t;
+  t = t.replace(ORAL_LEAD_SYLLABLES_RE, '');
+  const phrases = oralStripPhrasesFromText(v.oralStripPhrasesText);
+  if (phrases.length) t = stripOralEdges(t, phrases);
+  else t = stripOralEdges(t, []);
+  return t.replace(/\s{2,}/g, ' ').trim();
 }
 
 function normalizeState(partial: Partial<VoiceSettings>): VoiceSettings {
@@ -85,6 +173,10 @@ function normalizeState(partial: Partial<VoiceSettings>): VoiceSettings {
     stopMicAfterAuto: o.stopMicAfterAuto !== false,
     agentModel: typeof o.agentModel === 'string' ? o.agentModel.trim() : '',
     dashscopeApiKey: typeof o.dashscopeApiKey === 'string' ? o.dashscopeApiKey.trim() : '',
+    asrDisfluencyRemoval: o.asrDisfluencyRemoval !== false,
+    asrLanguageHintsText: parseAsrLanguageHintsText(o.asrLanguageHintsText),
+    oralStripEnabled: o.oralStripEnabled === true,
+    oralStripPhrasesText: parseOralStripPhrasesText(o.oralStripPhrasesText),
   };
 }
 
@@ -120,6 +212,17 @@ export const useVoiceSettingsStore = create<VoiceStore>()(
             patch.dashscopeApiKey != null
               ? String(patch.dashscopeApiKey).trim()
               : cur.dashscopeApiKey,
+          asrDisfluencyRemoval:
+            patch.asrDisfluencyRemoval != null ? patch.asrDisfluencyRemoval !== false : cur.asrDisfluencyRemoval,
+          asrLanguageHintsText:
+            patch.asrLanguageHintsText != null
+              ? parseAsrLanguageHintsText(patch.asrLanguageHintsText)
+              : cur.asrLanguageHintsText,
+          oralStripEnabled: patch.oralStripEnabled != null ? patch.oralStripEnabled === true : cur.oralStripEnabled,
+          oralStripPhrasesText:
+            patch.oralStripPhrasesText != null
+              ? parseOralStripPhrasesText(patch.oralStripPhrasesText)
+              : cur.oralStripPhrasesText,
         });
         set(next);
         try {
@@ -140,6 +243,10 @@ export const useVoiceSettingsStore = create<VoiceStore>()(
         stopMicAfterAuto: s.stopMicAfterAuto,
         agentModel: s.agentModel,
         dashscopeApiKey: s.dashscopeApiKey,
+        asrDisfluencyRemoval: s.asrDisfluencyRemoval,
+        asrLanguageHintsText: s.asrLanguageHintsText,
+        oralStripEnabled: s.oralStripEnabled,
+        oralStripPhrasesText: s.oralStripPhrasesText,
       }),
       merge: (persisted, current) => ({
         ...current,

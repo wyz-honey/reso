@@ -75,6 +75,16 @@ npm run start -w server
 npm run test-db -w server
 ```
 
+### 会话 REST API（节选）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/sessions` | 新建会话，响应 `{ id }` |
+| `GET` | `/api/sessions` | 列表；查询参数：`q`、`filter`（`all` \| `with` \| `empty`）、`page`、`pageSize` |
+| `GET` | `/api/sessions/:sessionId` | 会话详情含段落 |
+| `DELETE` | `/api/sessions/:sessionId` | 删除该会话（段落随外键级联删除） |
+| `POST` | `/api/sessions/batch-delete` | **批量删除**：请求体 JSON `{ "ids": ["uuid", ...] }`，最多 **100** 条；响应 `{ ok: true, deleted: number }` |
+
 ---
 
 ## 环境变量

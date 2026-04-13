@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  apiBatchDeleteSessions,
   apiCreateSession,
   apiDeleteSession,
   fetchSessionDetail,
@@ -21,6 +22,7 @@ function formatTime(iso) {
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const PARA_PAGE_OPTIONS = [10, 20, 50];
+const BATCH_DELETE_LIMIT = 100;
 
 export default function SessionsPage() {
   const [list, setList] = useState([]);
@@ -44,6 +46,7 @@ export default function SessionsPage() {
   const [paraPageSize, setParaPageSize] = useState(10);
   const [detailRefreshing, setDetailRefreshing] = useState(false);
   const [copiedParaId, setCopiedParaId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const t = setTimeout(() => setSearchQ(searchInput.trim()), 320);
@@ -66,6 +69,10 @@ export default function SessionsPage() {
   useEffect(() => {
     setPage(1);
   }, [searchQ]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [searchQ, filter, pageSize]);
 
   useEffect(() => {
     if (total === 0) return;
@@ -163,6 +170,57 @@ export default function SessionsPage() {
       backToList();
     } catch (e) {
       setMsg(e.message || '删除失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  };
+
+  const listIds = useMemo(() => list.map((row) => row.id), [list]);
+  const allOnPageSelected =
+    listIds.length > 0 && listIds.every((id) => selectedIds.has(id));
+  const someOnPageSelected = listIds.some((id) => selectedIds.has(id));
+
+  const toggleSelectAllPage = () => {
+    setSelectedIds((prev) => {
+      if (allOnPageSelected) {
+        const n = new Set(prev);
+        listIds.forEach((id) => n.delete(id));
+        return n;
+      }
+      return new Set([...prev, ...listIds]);
+    });
+  };
+
+  const batchOverLimit = selectedIds.size > BATCH_DELETE_LIMIT;
+
+  const onBatchDelete = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || ids.length > BATCH_DELETE_LIMIT) return;
+    if (
+      !window.confirm(
+        `确定删除选中的 ${ids.length} 个会话及其全部段落？此操作不可恢复。`
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMsg('');
+    try {
+      const { deleted } = await apiBatchDeleteSessions(ids);
+      setSelectedIds(new Set());
+      setMsg(`已删除 ${deleted} 个会话`);
+      await loadList();
+    } catch (e) {
+      setMsg(e.message || '批量删除失败');
     } finally {
       setBusy(false);
     }
@@ -302,7 +360,69 @@ export default function SessionsPage() {
 
           <div className="sessions-list-only sessions-list-only--flex">
             <div className="sessions-list-panel sessions-list-panel--full sessions-list-panel--stretch">
-              <div className="sessions-list-head">会话列表</div>
+              <div
+                className={`sessions-list-head sessions-list-head--row${
+                  selectedIds.size > 0 ? ' sessions-list-head--selection-active' : ''
+                }`}
+              >
+                <span className="sessions-list-head-title">会话列表</span>
+                {!loading && list.length > 0 ? (
+                  <label className="sessions-list-head-select">
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someOnPageSelected && !allOnPageSelected;
+                      }}
+                      onChange={toggleSelectAllPage}
+                      aria-label="全选当前页会话"
+                    />
+                    <span>本页全选</span>
+                  </label>
+                ) : null}
+              </div>
+              {!loading && list.length > 0 && selectedIds.size > 0 ? (
+                <div className="sessions-selection-bar" role="region" aria-label="已选会话的批量操作">
+                  <div className="sessions-selection-bar-inner">
+                    <div className="sessions-selection-copy">
+                      <span className="sessions-selection-count">
+                        已选择 <strong>{selectedIds.size}</strong> 个会话
+                      </span>
+                      <span className="sessions-selection-hint">
+                        可翻页继续勾选；修改搜索、筛选或每页条数会清空选择。
+                      </span>
+                    </div>
+                    <div className="sessions-selection-actions">
+                      <button
+                        type="button"
+                        className="btn-selection-secondary"
+                        disabled={busy}
+                        onClick={() => setSelectedIds(new Set())}
+                      >
+                        清除选择
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-selection-delete"
+                        disabled={busy || batchOverLimit}
+                        onClick={onBatchDelete}
+                        title={
+                          batchOverLimit
+                            ? `单次最多删除 ${BATCH_DELETE_LIMIT} 条`
+                            : '删除所选会话及全部段落'
+                        }
+                      >
+                        删除所选
+                      </button>
+                    </div>
+                  </div>
+                  {batchOverLimit ? (
+                    <p className="sessions-selection-warn" role="alert">
+                      单次最多删除 {BATCH_DELETE_LIMIT} 条，请先取消部分勾选。
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {loading ? (
                 <p className="sessions-muted sessions-list-body-pad">加载中…</p>
               ) : list.length === 0 ? (
@@ -312,43 +432,61 @@ export default function SessionsPage() {
                     : '暂无会话，点击右上角「新建会话」。'}
                 </p>
               ) : (
-                <ul className="sessions-list sessions-list--scroll">
-                  {list.map((row) => {
-                    const hasPara = (row.paragraph_count ?? 0) > 0;
-                    const title =
-                      row.list_title?.trim() ||
-                      (hasPara ? '（无标题）' : '暂无内容');
-                    const preview =
-                      row.preview?.trim() ||
-                      (hasPara ? '（摘要为空）' : '暂无已保存片段');
-                    return (
-                      <li key={row.id}>
-                        <button
-                          type="button"
-                          className="sessions-list-row sessions-list-row--rich"
-                          onClick={() => openSession(row.id)}
-                        >
-                          <div className="sessions-list-row-text">
-                            <div className="sessions-list-row-title">{title}</div>
-                            <div className="sessions-list-row-preview">{preview}</div>
-                            <div className="sessions-list-row-foot">
-                              <span className="sessions-list-time">{formatTime(row.created_at)}</span>
-                              <span className="sessions-list-id" title={row.id}>
-                                {row.id.slice(0, 8)}…
+                <>
+                  <ul className="sessions-list sessions-list--scroll">
+                    {list.map((row) => {
+                      const pc = Number(row.paragraph_count);
+                      const hasPara = !Number.isNaN(pc) && pc > 0;
+                      const title =
+                        (typeof row.list_title === 'string' && row.list_title.trim()) ||
+                        (hasPara ? '（无标题）' : '暂无内容');
+                      const preview =
+                        (typeof row.preview === 'string' && row.preview.trim()) ||
+                        (hasPara ? '（摘要为空）' : '暂无已保存片段');
+                      return (
+                        <li key={row.id} className="sessions-list-item">
+                          <div className="sessions-list-item-wrap">
+                            <label
+                              className="sessions-list-item-check sessions-list-item-check--tr"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(row.id)}
+                                onChange={() => toggleSelect(row.id)}
+                                aria-label={`选择会话 ${row.id.slice(0, 8)}…`}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              className="sessions-list-row sessions-list-row--rich sessions-list-row--with-check-tr"
+                              onClick={() => openSession(row.id)}
+                            >
+                            <div className="sessions-list-row-text">
+                              <div className="sessions-list-row-title">{title}</div>
+                              <div className="sessions-list-row-preview">{preview}</div>
+                              <div className="sessions-list-row-foot">
+                                <span className="sessions-list-time">{formatTime(row.created_at)}</span>
+                                <span className="sessions-list-id" title={row.id}>
+                                  {row.id.slice(0, 8)}…
+                                </span>
+                              </div>
+                            </div>
+                            <div className="sessions-list-row-meta">
+                              <span className="sessions-badge">
+                                {Number.isNaN(pc) ? 0 : pc} 段
+                              </span>
+                              <span className="sessions-list-chevron" aria-hidden>
+                                →
                               </span>
                             </div>
+                          </button>
                           </div>
-                          <div className="sessions-list-row-meta">
-                            <span className="sessions-badge">{row.paragraph_count ?? 0} 段</span>
-                            <span className="sessions-list-chevron" aria-hidden>
-                              →
-                            </span>
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
               )}
               {!loading && list.length > 0 ? (
                 <div className="sessions-pagination">

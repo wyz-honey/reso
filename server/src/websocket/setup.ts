@@ -13,7 +13,13 @@ function upgradePathname(url: string | undefined): string {
   return q === -1 ? url : url.slice(0, q);
 }
 
-export function attachWebSockets(httpServer: Server): void {
+function closeWss(server: WebSocketServer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+export function attachWebSockets(httpServer: Server): { shutdownSockets: () => Promise<void> } {
   const wss = new WebSocketServer({ noServer: true });
   const wssCursor = new WebSocketServer({ noServer: true });
 
@@ -57,7 +63,14 @@ export function attachWebSockets(httpServer: Server): void {
         return;
       }
 
-      let cmd: { type?: string; dashscopeApiKey?: string; asrModel?: string };
+      let cmd: {
+        type?: string;
+        dashscopeApiKey?: string;
+        asrModel?: string;
+        asrDisfluencyRemoval?: boolean;
+        asrLanguageHints?: string[];
+        asrMaxSentenceSilenceMs?: number;
+      };
       try {
         cmd = JSON.parse(data.toString()) as typeof cmd;
       } catch {
@@ -76,6 +89,13 @@ export function attachWebSockets(httpServer: Server): void {
           return;
         }
         const asrModel = typeof cmd.asrModel === 'string' ? cmd.asrModel : '';
+        const hints = Array.isArray(cmd.asrLanguageHints)
+          ? cmd.asrLanguageHints.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+          : undefined;
+        const maxMs =
+          typeof cmd.asrMaxSentenceSilenceMs === 'number' && !Number.isNaN(cmd.asrMaxSentenceSilenceMs)
+            ? cmd.asrMaxSentenceSilenceMs
+            : undefined;
         upstreamAsr = connectDashScope(
           apiKey,
           asrModel,
@@ -111,6 +131,11 @@ export function attachWebSockets(httpServer: Server): void {
           },
           () => {
             upstreamAsr = null;
+          },
+          {
+            disfluencyRemovalEnabled: cmd.asrDisfluencyRemoval !== false,
+            ...(hints && hints.length ? { languageHints: hints } : {}),
+            ...(maxMs != null ? { maxSentenceSilenceMs: maxMs } : {}),
           }
         );
         return;
@@ -193,4 +218,8 @@ export function attachWebSockets(httpServer: Server): void {
     clientWs.on('close', stopWatch);
     clientWs.on('error', stopWatch);
   });
+
+  return {
+    shutdownSockets: () => Promise.all([closeWss(wss), closeWss(wssCursor)]).then(() => {}),
+  };
 }

@@ -4,10 +4,10 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** server/src -> repo/cursor */
+/** `server/src/services` → `server/outputs/cursor`（其下按会话 ID 分子目录） */
 export function getCursorOutputRootResolved(): string {
   return path.resolve(
-    process.env.RESO_CURSOR_OUTPUT_DIR || path.join(__dirname, '..', '..', '..', 'cursor')
+    process.env.RESO_CURSOR_OUTPUT_DIR || path.join(__dirname, '..', '..', 'outputs', 'cursor')
   );
 }
 

@@ -3,12 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
-    "dev:bun": "bun --watch src/index.ts",
-    "start:bun": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "dev:node": "tsx watch src/index.ts",
+    "start:node": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test-db": "tsx scripts/test-db.ts"
+    "test-db": "bun scripts/test-db.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

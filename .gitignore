@@ -7,3 +7,4 @@ dist
 # Cursor / local tooling（不上传）
 .cursor/
 cursor/
+server/outputs/cursor/

@@ -8,12 +8,12 @@ const SYSTEM_FIELD_OPTIONS = [
   {
     value: 'cursorStdout',
     label: 'Cursor 标准输出文件',
-    hint: '项目/cursor/<会话>/info.txt',
+    hint: 'server/outputs/cursor/<会话>/info.txt',
   },
   {
     value: 'cursorStderr',
     label: 'Cursor 错误输出文件',
-    hint: '项目/cursor/<会话>/error.txt',
+    hint: 'server/outputs/cursor/<会话>/error.txt',
   },
 ];
 

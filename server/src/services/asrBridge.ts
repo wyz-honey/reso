@@ -25,11 +25,39 @@ export interface DashScopeAsrSession {
   close(): void;
 }
 
+/** 与百炼 Paraformer 实时识别 WebSocket 文档一致 */
+export type AsrConnectOptions = {
+  /** 过滤「嗯、啊」等语气词；默认 true */
+  disfluencyRemovalEnabled?: boolean;
+  /** 如 `['zh']` 提升中文场景准确率；空数组表示不传（模型自动语种） */
+  languageHints?: string[];
+  /** VAD 断句静音阈值 ms，范围 200–6000，默认由服务端决定 */
+  maxSentenceSilenceMs?: number;
+};
+
+function buildAsrParameters(opts?: AsrConnectOptions): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    format: 'pcm',
+    sample_rate: 16000,
+  };
+  base.disfluency_removal_enabled = opts?.disfluencyRemovalEnabled !== false;
+  const hints = opts?.languageHints?.map((s) => String(s).trim().toLowerCase()).filter(Boolean) ?? [];
+  if (hints.length > 0) {
+    base.language_hints = hints;
+  }
+  const ms = opts?.maxSentenceSilenceMs;
+  if (typeof ms === 'number' && ms >= 200 && ms <= 6000) {
+    base.max_sentence_silence = Math.round(ms);
+  }
+  return base;
+}
+
 export function connectDashScope(
   apiKey: string,
   asrModelOverride: string,
   onUpstreamMessage: (msg: Record<string, unknown>) => void,
-  onUpstreamClose: () => void
+  onUpstreamClose: () => void,
+  asrOptions?: AsrConnectOptions
 ): DashScopeAsrSession {
   const taskId = makeTaskId();
   const dash = new WebSocket(DASHSCOPE_URL, {
@@ -48,10 +76,7 @@ export function connectDashScope(
       task: 'asr',
       function: 'recognition',
       model,
-      parameters: {
-        format: 'pcm',
-        sample_rate: 16000,
-      },
+      parameters: buildAsrParameters(asrOptions),
       input: {},
     },
   };

@@ -148,7 +148,8 @@ function CursorOutputDetail({ row, onSaved }) {
               默认含 <code className="settings-code">&lt;输入&gt;</code>、<code className="settings-code">&lt;工作空间&gt;</code>（<code className="settings-code">-w</code>）、
               <code className="settings-code">&lt;模型&gt;</code>、<code className="settings-code">&lt;输出正常信息地址&gt;</code>、
               <code className="settings-code">&lt;输出错误信息地址&gt;</code>；后两项默认可选「系统」，解析为服务端项目目录下{' '}
-              <code className="settings-code">cursor/&lt;会话ID&gt;/info.txt</code> 与 <code className="settings-code">error.txt</code>。
+              <code className="settings-code">server/outputs/cursor/&lt;会话ID&gt;/info.txt</code> 与{' '}
+              <code className="settings-code">error.txt</code>。
             </p>
             <div className="outputs-expand-label outputs-expand-label--cli-template">
               <CliInstructionHeader

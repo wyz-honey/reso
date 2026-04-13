@@ -1,20 +1,55 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { AppDb } from '~/database/db.ts';
 import {
   addParagraph,
   clearParagraphs,
   createSession,
   deleteSession,
+  deleteSessionsByIds,
   getSessionWithParagraphs,
   listSessions,
 } from '~/services/sessionService.ts';
 import { AppError, getErrorStatus } from '~/utils/appError.ts';
 import { serviceError } from '~/utils/logger.ts';
 
+/** 挂在根 app 上（`POST /api/sessions/batch-delete`），避免子路由挂载后部分环境下 404。 */
+export async function handleSessionsBatchDelete(
+  db: AppDb | null,
+  req: Request,
+  res: Response
+): Promise<void> {
+  if (!db) {
+    res.status(503).json({ error: 'Database not configured' });
+    return;
+  }
+  const raw = req.body?.ids;
+  if (!Array.isArray(raw)) {
+    res.status(400).json({ error: 'Request body must include ids: string[]' });
+    return;
+  }
+  const ids = raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+  if (ids.length > 100) {
+    res.status(400).json({ error: 'At most 100 sessions per request' });
+    return;
+  }
+  if (ids.length === 0) {
+    res.json({ ok: true, deleted: 0 });
+    return;
+  }
+  try {
+    const deleted = await deleteSessionsByIds(db, ids);
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    serviceError('sessions', 'POST /api/sessions/batch-delete failed', e);
+    res.status(500).json({ error: 'Failed to delete sessions' });
+  }
+}
+
+/** 挂在 `app.use('/api/sessions', …)` 上。 */
 export function createSessionsRouter(db: AppDb | null): Router {
   const r = Router();
 
-  r.post('/api/sessions', async (_req, res) => {
+  r.post('/', async (_req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured (set OPC_PG_*)' });
     }
@@ -27,7 +62,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
   });
 
-  r.get('/api/sessions', async (req, res) => {
+  r.get('/', async (req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured' });
     }
@@ -47,7 +82,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
   });
 
-  r.get('/api/sessions/:sessionId', async (req, res) => {
+  r.get('/:sessionId', async (req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured' });
     }
@@ -64,7 +99,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
   });
 
-  r.delete('/api/sessions/:sessionId/paragraphs', async (req, res) => {
+  r.delete('/:sessionId/paragraphs', async (req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured' });
     }
@@ -81,7 +116,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
   });
 
-  r.delete('/api/sessions/:sessionId', async (req, res) => {
+  r.delete('/:sessionId', async (req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured' });
     }
@@ -98,7 +133,7 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
   });
 
-  r.post('/api/sessions/:sessionId/paragraphs', async (req, res) => {
+  r.post('/:sessionId/paragraphs', async (req, res) => {
     if (!db) {
       return res.status(503).json({ error: 'Database not configured' });
     }

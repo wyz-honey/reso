@@ -21,9 +21,11 @@ import {
 } from '../stores/modelProvidersStore.js';
 import {
   AGENT_VOICE_SILENCE_SEC,
+  getAsrLanguageHintsArray,
   getVoiceControlSummary,
   getVoiceSettings,
   matchesEndPhrase,
+  normalizeTranscriptText,
   stripMatchedPhrase,
 } from '../stores/voiceSettingsStore.js';
 import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor.js';
@@ -752,13 +754,14 @@ export default function HomePage() {
           return;
         }
         if (msg.type === 'transcript') {
+          const vox = getVoiceSettings();
           if (msg.sentenceEnd) {
             if (partialUiRafRef.current != null) {
               cancelAnimationFrame(partialUiRafRef.current);
               partialUiRafRef.current = null;
             }
             pendingPartialUiRef.current = '';
-            const piece = msg.text || '';
+            const piece = normalizeTranscriptText(msg.text || '', vox);
             partialTextRef.current = '';
             setPartialText('');
             setEditorContent((prev) => {
@@ -771,7 +774,7 @@ export default function HomePage() {
               return next;
             });
           } else {
-            pendingPartialUiRef.current = msg.text || '';
+            pendingPartialUiRef.current = normalizeTranscriptText(msg.text || '', vox);
             if (partialUiRafRef.current == null) {
               partialUiRafRef.current = requestAnimationFrame(() => {
                 partialUiRafRef.current = null;
@@ -976,11 +979,15 @@ export default function HomePage() {
       };
 
       const speechKey = getResolvedSpeechApiKey();
+      const vStart = getVoiceSettings();
+      const langHints = getAsrLanguageHintsArray(vStart.asrLanguageHintsText);
       ws.send(
         JSON.stringify({
           type: 'start',
           asrModel: getResolvedSpeechAsrApiModelId(),
           ...(speechKey ? { dashscopeApiKey: speechKey } : {}),
+          asrDisfluencyRemoval: vStart.asrDisfluencyRemoval,
+          ...(langHints.length ? { asrLanguageHints: langHints } : {}),
         })
       );
     });

@@ -7,14 +7,42 @@ import { createPool } from '~/database/pool.ts';
 import { sessions } from '~/database/schema.ts';
 import { attachWebSockets } from '~/websocket/setup.ts';
 import { PORT } from '~/config/constants.ts';
-import { getLogFilePath, serviceError, serviceLog, serviceWarn } from '~/utils/logger.ts';
+import {
+  getErrorLogFilePath,
+  getLogFilePath,
+  serviceError,
+  serviceLog,
+  serviceWarn,
+} from '~/utils/logger.ts';
 
 const pool = createPool();
 const db = pool ? createDb(pool) : null;
 const app = createApp(db);
 const httpServer = createServer(app);
 
-attachWebSockets(httpServer);
+const { shutdownSockets } = attachWebSockets(httpServer);
+
+let shuttingDown = false;
+function gracefulShutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void (async () => {
+    try {
+      await shutdownSockets();
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => (err ? reject(err) : resolve()));
+      });
+      if (pool) await pool.end();
+      process.exit(0);
+    } catch (e) {
+      serviceError('server', `${signal} graceful shutdown failed`, e);
+      process.exit(1);
+    }
+  })();
+}
+
+process.once('SIGINT', () => gracefulShutdown('SIGINT'));
+process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 async function main(): Promise<void> {
   if (db) {
@@ -38,7 +66,7 @@ async function main(): Promise<void> {
   httpServer.listen(PORT, () => {
     serviceLog(
       'server',
-      `listening http://localhost:${PORT} (ws /ws/asr, /ws/cursor-tail, REST /api) log→${getLogFilePath()}`
+      `listening http://localhost:${PORT} (ws /ws/asr, /ws/cursor-tail, REST /api) log→${getLogFilePath()} errors→${getErrorLogFilePath()}`
     );
   });
 }

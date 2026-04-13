@@ -17,7 +17,6 @@ import {
 
 export function createQuickInputsRouter(db: AppDb | null): Router {
   const r = Router();
-
   r.get('/api/quick-inputs', async (_req, res) => {
     if (!db) {
       serviceWarn('quick-inputs', 'GET /api/quick-inputs rejected: no database', {
@@ -33,8 +32,14 @@ export function createQuickInputsRouter(db: AppDb | null): Router {
       return res.json({ items });
     } catch (e) {
       serviceError('quick-inputs', 'GET /api/quick-inputs failed (Drizzle + SQL fallback)', e);
+      const pgCode =
+        e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string'
+          ? (e as { code: string }).code
+          : undefined;
       return res.status(500).json({
         error: 'Failed to list quick inputs',
+        detail: e instanceof Error ? e.message : String(e),
+        ...(pgCode ? { pgCode } : {}),
         ...errorDetailForClient(e),
       });
     }
