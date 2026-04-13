@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
+  CURSOR_EXTERNAL_THREAD_PROVIDER,
   listAllOutputs,
   saveBuiltinOutputOverride,
   updateCustomOutput,
@@ -37,6 +38,12 @@ function CursorOutputDetail({ row, onSaved }) {
   const [angleSlots, setAngleSlots] = useState(
     () => mergeAngleSlotsWithDefaults(initialTmpl, Array.isArray(ext.angleSlots) ? ext.angleSlots : [])
   );
+  const [externalThreadProvider, setExternalThreadProvider] = useState(
+    () =>
+      typeof ext.externalThreadProvider === 'string' && ext.externalThreadProvider.trim()
+        ? ext.externalThreadProvider.trim()
+        : CURSOR_EXTERNAL_THREAD_PROVIDER
+  );
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -51,6 +58,7 @@ function CursorOutputDetail({ row, onSaved }) {
     const nextExt = {
       commandTemplate: tmpl,
       angleSlots: mergeAngleSlotsWithDefaults(tmpl, angleSlots),
+      externalThreadProvider: externalThreadProvider.trim() || CURSOR_EXTERNAL_THREAD_PROVIDER,
     };
     try {
       if (row.builtin) {
@@ -94,8 +102,8 @@ function CursorOutputDetail({ row, onSaved }) {
             <h1 className="sessions-title">Cursor 目标</h1>
             <p className="sessions-subtitle">
               Agent 类 CLI：工作台只会要求填写<strong>指令模板里出现</strong>的 <code className="settings-code">&lt;模型&gt;</code>、
-              <code className="settings-code">&lt;工作空间&gt;</code>、<code className="settings-code">&lt;输出路径&gt;</code> 等占位；
-              段落为每次发送时的 <code className="settings-code">-p</code> 内容。
+              <code className="settings-code">&lt;工作空间&gt;</code>、<code className="settings-code">&lt;外部CLI线程&gt;</code> 等占位；
+              绑定工作会话后，侧栏会自动关联 Cursor 对话（运行 Reso 服务的机器需可执行 <code className="settings-code">agent create-chat</code>）；复制/发送时会自动追加 <code className="settings-code">--resume</code>。段落为每次发送时的 <code className="settings-code">-p</code> 内容。
             </p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id" title={row.id}>
@@ -145,12 +153,27 @@ function CursorOutputDetail({ row, onSaved }) {
           <section className="settings-category">
             <h2 className="settings-section-title">指令模板与占位</h2>
             <p className="settings-category-lead">
-              默认含 <code className="settings-code">&lt;输入&gt;</code>、<code className="settings-code">&lt;工作空间&gt;</code>（<code className="settings-code">-w</code>）、
+              默认含 <code className="settings-code">&lt;输入&gt;</code>、<code className="settings-code">&lt;工作空间&gt;</code>（<code className="settings-code">--workspace</code>）、
               <code className="settings-code">&lt;模型&gt;</code>、<code className="settings-code">&lt;输出正常信息地址&gt;</code>、
-              <code className="settings-code">&lt;输出错误信息地址&gt;</code>；后两项默认可选「系统」，解析为服务端项目目录下{' '}
-              <code className="settings-code">server/outputs/cursor/&lt;会话ID&gt;/info.txt</code> 与{' '}
-              <code className="settings-code">error.txt</code>。
+              <code className="settings-code">&lt;输出错误信息地址&gt;</code>；复制/发送时会在重定向前自动插入 <code className="settings-code">--resume</code>（与当前工作会话关联）。
+              后两项默认可选「系统」，解析为 <code className="settings-code">server/outputs/cursor/&lt;会话ID&gt;/</code> 下文件。若模板中自行写了 <code className="settings-code">--resume</code>，则不会重复追加。
             </p>
+            <details className="settings-details settings-details--advanced">
+              <summary className="settings-details-summary">高级：多 CLI 厂商映射键</summary>
+              <p className="settings-category-lead settings-category-lead--tight">
+                一般无需修改。若接入其它 CLI（如 Qoder），可改此键以区分库表映射；默认与自动关联逻辑一致。
+              </p>
+              <label className="settings-label">
+                映射键
+                <input
+                  className="settings-input"
+                  value={externalThreadProvider}
+                  onChange={(e) => setExternalThreadProvider(e.target.value)}
+                  placeholder={CURSOR_EXTERNAL_THREAD_PROVIDER}
+                  spellCheck={false}
+                />
+              </label>
+            </details>
             <div className="outputs-expand-label outputs-expand-label--cli-template">
               <CliInstructionHeader
                 onExample={() => {

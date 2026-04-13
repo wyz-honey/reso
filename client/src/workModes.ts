@@ -2,6 +2,7 @@ import { mergeAngleSlotsWithDefaults } from './cliSubstitute.js';
 import {
   addCustomOutput,
   CURSOR_CLI_DEFAULT_TEMPLATE,
+  CURSOR_EXTERNAL_THREAD_PROVIDER,
   getCustomOutputs,
   listAllOutputs,
   newOutputId,
@@ -151,6 +152,10 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
           ? ext.commandTemplate.trim()
           : CURSOR_CLI_DEFAULT_TEMPLATE;
       const angleSlots = Array.isArray(ext.angleSlots) ? ext.angleSlots : [];
+      const etp =
+        typeof ext.externalThreadProvider === 'string' && ext.externalThreadProvider.trim()
+          ? ext.externalThreadProvider.trim()
+          : CURSOR_EXTERNAL_THREAD_PROVIDER;
       return {
         id: o.id,
         name: o.name,
@@ -161,6 +166,7 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         cliWorkspace: '',
         angleSlots: mergeAngleSlotsWithDefaults(tmpl, angleSlots),
         cliVariant: 'cursor',
+        externalThreadProvider: etp,
       };
     }
     case 'stream':

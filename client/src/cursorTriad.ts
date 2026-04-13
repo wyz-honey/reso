@@ -23,6 +23,13 @@ export function getMergedCursorSlots(mode: Record<string, unknown> | null | unde
   return mergeAngleSlotsWithDefaults(tmpl, (mode.angleSlots as unknown[]) || []);
 }
 
+/** 指令模板里是否存在「系统 → 外部 CLI 线程」占位，需要服务端 ensure / create-chat */
+export function cursorModeNeedsExternalThread(mode: Record<string, unknown> | null | undefined): boolean {
+  if (!mode || mode.cliVariant !== 'cursor') return false;
+  const slots = getMergedCursorSlots(mode);
+  return slots.some((s) => s.source === 'system' && s.systemField === 'externalThread');
+}
+
 export function cursorTriadCustomValues(mode: Record<string, unknown> | null | undefined) {
   const slots = getMergedCursorSlots(mode);
   const tmpl = (mode?.cliTemplate as string) || CURSOR_CLI_DEFAULT_TEMPLATE;
@@ -55,6 +62,7 @@ export function cursorTriadComplete(
       if (f === 'workspace' && !String(workspace).trim()) return false;
       if (f === 'cursorStdout' && !String(ctx?.cursorStdoutAbsPath || '').trim()) return false;
       if (f === 'cursorStderr' && !String(ctx?.cursorStderrAbsPath || '').trim()) return false;
+      if (f === 'externalThread' && !String(ctx?.externalThreadId || '').trim()) return false;
     }
   }
   return true;
@@ -81,7 +89,7 @@ export function cursorCliReady(
 const TRIAD_HINT: Record<string, string> = {
   模型: '模型（--model）',
   工作空间: '工作空间',
-  输出路径: '输出路径（--resume）',
+  输出路径: '输出路径（若模板含该占位）',
 };
 
 export function cursorTriadFillHint(template: unknown): string {
@@ -107,6 +115,10 @@ export function cursorCliFillHint(
   }
   if (needsStderr && !String(ctx?.cursorStderrAbsPath || '').trim()) {
     return '请绑定数据库会话，或把 <输出错误信息地址> 改为自定义路径';
+  }
+  const needsExt = merged.some((s) => s.source === 'system' && s.systemField === 'externalThread');
+  if (needsExt && !String(ctx?.externalThreadId || '').trim()) {
+    return '正在关联 Cursor 对话，请稍候；若一直失败请确认运行 Reso 的机器已安装 agent 并已登录（或检查目标详情中的指令模板）';
   }
   return '请补全指令模板中的占位（含正文段落与路径类字段）';
 }

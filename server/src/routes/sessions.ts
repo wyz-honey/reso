@@ -9,6 +9,12 @@ import {
   getSessionWithParagraphs,
   listSessions,
 } from '~/services/sessionService.ts';
+import { ensureSessionExternalThreadWithAgentCreateChat } from '~/services/cursorAgentEnsure.ts';
+import {
+  deleteSessionExternalThread,
+  listSessionExternalThreads,
+  upsertSessionExternalThread,
+} from '~/services/sessionExternalThreadService.ts';
 import { AppError, getErrorStatus } from '~/utils/appError.ts';
 import { serviceError } from '~/utils/logger.ts';
 
@@ -79,6 +85,83 @@ export function createSessionsRouter(db: AppDb | null): Router {
     } catch (e) {
       serviceError('sessions', 'GET /api/sessions failed', e);
       return res.status(500).json({ error: 'Failed to list sessions' });
+    }
+  });
+
+  r.get('/:sessionId/external-threads', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    try {
+      const threads = await listSessionExternalThreads(db, req.params.sessionId);
+      return res.json({ threads });
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'GET /api/sessions/.../external-threads failed', e);
+      return res.status(500).json({ error: 'Failed to list external threads' });
+    }
+  });
+
+  r.put('/:sessionId/external-threads/:provider', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : '';
+    try {
+      await upsertSessionExternalThread(db, req.params.sessionId, req.params.provider, threadId);
+      return res.json({ ok: true });
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'PUT /api/sessions/.../external-threads/... failed', e);
+      return res.status(500).json({ error: 'Failed to save external thread' });
+    }
+  });
+
+  r.delete('/:sessionId/external-threads/:provider', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    try {
+      const deleted = await deleteSessionExternalThread(db, req.params.sessionId, req.params.provider);
+      return res.json({ ok: true, deleted });
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'DELETE /api/sessions/.../external-threads/... failed', e);
+      return res.status(500).json({ error: 'Failed to delete external thread' });
+    }
+  });
+
+  r.post('/:sessionId/external-threads/:provider/ensure', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    try {
+      const out = await ensureSessionExternalThreadWithAgentCreateChat(
+        db,
+        req.params.sessionId,
+        req.params.provider
+      );
+      return res.json(out);
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'POST /api/sessions/.../external-threads/.../ensure failed', e);
+      const detail = e instanceof Error ? e.message : String(e);
+      return res.status(500).json({
+        error: 'Failed to ensure external thread',
+        detail,
+      });
     }
   });
 

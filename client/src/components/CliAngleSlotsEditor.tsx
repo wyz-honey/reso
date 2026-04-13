@@ -15,6 +15,11 @@ const SYSTEM_FIELD_OPTIONS = [
     label: 'Cursor 错误输出文件',
     hint: 'server/outputs/cursor/<会话>/error.txt',
   },
+  {
+    value: 'externalThread',
+    label: '外部 CLI 线程 ID',
+    hint: 'session_external_threads（侧栏绑定）',
+  },
 ];
 
 export default function CliAngleSlotsEditor({ slots, onChange }) {

@@ -6,7 +6,8 @@
     "dev": "bun --watch ./src/index.ts",
     "start": "bun ./src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test-db": "bun scripts/test-db.ts"
+    "test-db": "bun scripts/test-db.ts",
+    "init-db": "bun scripts/init-db.ts"
   },
   "engines": {
     "bun": ">=1.1.0"

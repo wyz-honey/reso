@@ -5,6 +5,7 @@ import {
   apiCreateSession,
   apiDeleteChatMessages,
   apiDeleteChatThread,
+  apiEnsureSessionExternalThread,
   apiSaveParagraph,
   fetchChatThread,
   fetchCursorSessionPaths,
@@ -31,6 +32,7 @@ import {
 import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor.js';
 import CliInstructionHeader from '../components/CliInstructionHeader.js';
 import {
+  appendCursorAutoResume,
   buildAllCustomAngleSlots,
   buildAngleCliCommand,
   buildCliCommand,
@@ -49,6 +51,7 @@ import {
 } from '../workModes.js';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
+  CURSOR_EXTERNAL_THREAD_PROVIDER,
   saveBuiltinOutputOverride,
   updateCustomOutput,
 } from '../outputCatalog.js';
@@ -59,6 +62,11 @@ import {
   cursorTriadLabelsInTemplate,
   getMergedCursorSlots,
 } from '../cursorTriad.js';
+import CursorCliStructuredView from '../components/CursorCliStructuredView.js';
+import {
+  looksLikeCursorStreamJson,
+  parseCliOutputForDelivery,
+} from '../cliOutputFormats/index.js';
 import '../App.css';
 import WorkModeSelect from '../components/WorkModeSelect.js';
 import pcmWorkletUrl from '../audio/pcmCaptureProcessor.js?url';
@@ -83,16 +91,6 @@ function wsUrl() {
   }
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${window.location.host}/ws/asr`;
-}
-
-/** Cursor 侧栏：将 info.txt / error.txt 拼成助手气泡正文（Markdown） */
-function formatCursorCliAssistantBody(info, error) {
-  const i = String(info ?? '').replace(/\s+$/, '');
-  const e = String(error ?? '').replace(/\s+$/, '');
-  if (i && e) return `${i}\n\n---\n\n\`\`\`\n${e}\n\`\`\``;
-  if (i) return i;
-  if (e) return `\`\`\`\n${e}\n\`\`\``;
-  return '';
 }
 
 function cursorTailWsUrl() {
@@ -225,7 +223,13 @@ function IconCliParams() {
 }
 
 /** 根据当前模式拼出 CLI 字符串；cursor 未填齐时返回 error */
-function computeWorkbenchCliCommand(mode, paragraphText, sessionId, cursorFilePaths) {
+function computeWorkbenchCliCommand(
+  mode,
+  paragraphText,
+  sessionId,
+  cursorFilePaths,
+  externalThreadId = ''
+) {
   if (!mode || mode.kind !== 'cli') return { error: '非 CLI 模式' };
   const text = String(paragraphText ?? '');
   const sid = sessionId == null || sessionId === '' ? '' : String(sessionId);
@@ -242,11 +246,13 @@ function computeWorkbenchCliCommand(mode, paragraphText, sessionId, cursorFilePa
       workspace: String(mode.cliWorkspace || '').trim(),
       cursorStdoutAbsPath: cursorFilePaths?.infoTxtAbs || '',
       cursorStderrAbsPath: cursorFilePaths?.errorTxtAbs || '',
+      externalThreadId: String(externalThreadId ?? '').trim(),
     };
     if (!cursorCliReady(tmpl, mode.angleSlots || [], ctx)) {
       return { error: cursorCliFillHint(tmpl, mode.angleSlots || [], ctx) };
     }
-    const cmd = buildAngleCliCommand(tmpl, mergedSlots, ctx);
+    const built = buildAngleCliCommand(tmpl, mergedSlots, ctx);
+    const cmd = appendCursorAutoResume(built, ctx.externalThreadId);
     return { cmd };
   }
   if (mode.cliVariant === 'xiaoai') {
@@ -296,7 +302,13 @@ export default function HomePage() {
   const [workspacePickLoading, setWorkspacePickLoading] = useState(false);
   const [workspacePickErr, setWorkspacePickErr] = useState('');
   const [cursorSessionFilePaths, setCursorSessionFilePaths] = useState(null);
-  const [cursorCliMessages, setCursorCliMessages] = useState([]);
+  const [cursorTailInfo, setCursorTailInfo] = useState('');
+  const [cursorTailError, setCursorTailError] = useState('');
+  const [cursorPendingUserPrompt, setCursorPendingUserPrompt] = useState(null);
+  const [externalThreadsByProvider, setExternalThreadsByProvider] = useState({});
+  const [cursorEnsureStatus, setCursorEnsureStatus] = useState('idle');
+  const [cursorEnsureErrorMsg, setCursorEnsureErrorMsg] = useState('');
+  const [cursorEnsureRetryNonce, setCursorEnsureRetryNonce] = useState(0);
 
   const wsRef = useRef(null);
   const cursorWsRef = useRef(null);
@@ -465,7 +477,9 @@ export default function HomePage() {
   }, [isCursorCli, asrSessionId]);
 
   useEffect(() => {
-    setCursorCliMessages([]);
+    setCursorTailInfo('');
+    setCursorTailError('');
+    setCursorPendingUserPrompt(null);
   }, [asrSessionId]);
 
   useEffect(() => {
@@ -491,18 +505,8 @@ export default function HomePage() {
         if (d.type === 'files') {
           const info = typeof d.info === 'string' ? d.info : '';
           const error = typeof d.error === 'string' ? d.error : '';
-          const body = formatCursorCliAssistantBody(info, error);
-          setCursorCliMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === 'assistant') {
-              if (!body.trim()) return [...prev.slice(0, -1)];
-              return [...prev.slice(0, -1), { role: 'assistant', content: body }];
-            }
-            if (last?.role === 'user' && body.trim()) {
-              return [...prev, { role: 'assistant', content: body }];
-            }
-            return prev;
-          });
+          setCursorTailInfo(info);
+          setCursorTailError(error);
         }
       } catch {
         /* ignore */
@@ -521,11 +525,81 @@ export default function HomePage() {
     };
   }, [isCursorCli, asrSessionId]);
 
+  const cursorExternalThreadProvider = useMemo(() => {
+    if (!activeMode || activeMode.cliVariant !== 'cursor') return CURSOR_EXTERNAL_THREAD_PROVIDER;
+    const p = activeMode.externalThreadProvider;
+    return String(p || CURSOR_EXTERNAL_THREAD_PROVIDER).trim() || CURSOR_EXTERNAL_THREAD_PROVIDER;
+  }, [activeMode]);
+
+  useEffect(() => {
+    if (!isCursorCli || !asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId))) {
+      setExternalThreadsByProvider({});
+      setCursorEnsureStatus('idle');
+      setCursorEnsureErrorMsg('');
+      return;
+    }
+    const prov = cursorExternalThreadProvider;
+    let cancelled = false;
+    setExternalThreadsByProvider({});
+    setCursorEnsureStatus('loading');
+    setCursorEnsureErrorMsg('');
+    apiEnsureSessionExternalThread(asrSessionId, prov)
+      .then(({ threadId }) => {
+        if (cancelled) return;
+        setExternalThreadsByProvider({ [prov]: threadId });
+        setCursorEnsureStatus('ok');
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setCursorEnsureStatus('error');
+        setCursorEnsureErrorMsg(e.message || '关联失败');
+        setExternalThreadsByProvider({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isCursorCli,
+    asrSessionId,
+    activeMode,
+    cursorExternalThreadProvider,
+    cursorEnsureRetryNonce,
+  ]);
+
+  const cursorResolvedExternalThreadId = useMemo(() => {
+    const p = cursorExternalThreadProvider;
+    return String(externalThreadsByProvider[p] || '').trim();
+  }, [cursorExternalThreadProvider, externalThreadsByProvider]);
+
+  const cursorParsedOutput = useMemo(
+    () => parseCliOutputForDelivery('cursor_cli', cursorTailInfo, cursorTailError),
+    [cursorTailInfo, cursorTailError]
+  );
+
+  const cursorStreamFormatHint = useMemo(() => {
+    if (!String(cursorTailInfo || '').trim()) return null;
+    if (looksLikeCursorStreamJson(cursorTailInfo)) return null;
+    return '当前输出不是 Cursor stream-json（NDJSON），已按原文展示。其他 CLI 可后续接入独立解析规则。';
+  }, [cursorTailInfo]);
+
+  useEffect(() => {
+    if (!cursorPendingUserPrompt?.trim()) return;
+    const t = cursorTailInfo;
+    if (!String(t).trim()) return;
+    const p = cursorPendingUserPrompt.trim();
+    if (
+      t.includes('"type":"user"') ||
+      (p.length > 0 && t.includes(p.slice(0, Math.min(48, p.length))))
+    ) {
+      setCursorPendingUserPrompt(null);
+    }
+  }, [cursorTailInfo, cursorPendingUserPrompt]);
+
   useEffect(() => {
     const el = cursorPanelScrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [cursorCliMessages]);
+  }, [cursorTailInfo, cursorTailError, cursorPendingUserPrompt, cursorParsedOutput.blocks.length]);
 
   const cursorTriadInputs = useMemo(() => {
     if (!isCursorCli || !activeMode) {
@@ -541,6 +615,7 @@ export default function HomePage() {
       workspace: String(activeMode?.cliWorkspace || '').trim(),
       cursorStdoutAbsPath: cursorSessionFilePaths?.infoTxtAbs || '',
       cursorStderrAbsPath: cursorSessionFilePaths?.errorTxtAbs || '',
+      externalThreadId: cursorResolvedExternalThreadId,
     }),
     [
       editorContent,
@@ -548,6 +623,7 @@ export default function HomePage() {
       asrSessionId,
       activeMode?.cliWorkspace,
       cursorSessionFilePaths,
+      cursorResolvedExternalThreadId,
     ]
   );
 
@@ -571,7 +647,12 @@ export default function HomePage() {
       const next = slots.map((s) =>
         s.label === label ? { ...s, source: 'custom', customValue: value } : s
       );
-      const ext = { commandTemplate: tmpl, angleSlots: next };
+      const ext = {
+        commandTemplate: tmpl,
+        angleSlots: next,
+        externalThreadProvider:
+          activeMode.externalThreadProvider || CURSOR_EXTERNAL_THREAD_PROVIDER,
+      };
       if (activeMode.builtIn) {
         saveBuiltinOutputOverride(activeMode.id, { extensions: ext });
       } else {
@@ -1285,7 +1366,13 @@ export default function HomePage() {
     if (copyBusyRef.current) return false;
     const text = `${editorContentRef.current}${partialTextRef.current || ''}`;
     const sid = dbSessionIdRef.current;
-    const computed = computeWorkbenchCliCommand(activeMode, text, sid, cursorSessionFilePaths);
+    const computed = computeWorkbenchCliCommand(
+      activeMode,
+      text,
+      sid,
+      cursorSessionFilePaths,
+      cursorResolvedExternalThreadId
+    );
     if (computed.error) {
       setStatus(`${computed.error}，再复制指令`);
       return false;
@@ -1302,7 +1389,7 @@ export default function HomePage() {
     } finally {
       setCopyBusy(false);
     }
-  }, [activeMode, cursorSessionFilePaths]);
+  }, [activeMode, cursorSessionFilePaths, cursorResolvedExternalThreadId]);
 
   const performCliPipeline = useCallback(
     async (segment) => {
@@ -1311,7 +1398,13 @@ export default function HomePage() {
       const text = String(segment || '').trim();
       if (!text) return false;
       const sid = dbSessionIdRef.current;
-      const computed = computeWorkbenchCliCommand(activeMode, text, sid, cursorSessionFilePaths);
+      const computed = computeWorkbenchCliCommand(
+        activeMode,
+        text,
+        sid,
+        cursorSessionFilePaths,
+        cursorResolvedExternalThreadId
+      );
       if (computed.error) {
         setStatus(`${computed.error}，再发送`);
         return false;
@@ -1338,7 +1431,7 @@ export default function HomePage() {
           return false;
         }
         if (activeMode.cliVariant === 'cursor') {
-          setCursorCliMessages((prev) => [...prev, { role: 'user', content: text }]);
+          setCursorPendingUserPrompt(text);
         }
         setEditorContent('');
         setPartialText('');
@@ -1348,7 +1441,7 @@ export default function HomePage() {
         setCopyBusy(false);
       }
     },
-    [activeMode, cursorSessionFilePaths]
+    [activeMode, cursorSessionFilePaths, cursorResolvedExternalThreadId]
   );
 
   const runAutoSubmit = useCallback(
@@ -1879,33 +1972,62 @@ export default function HomePage() {
                 <button
                   type="button"
                   className="btn-agent-clear-chat"
-                  onClick={() => setCursorCliMessages([])}
+                  onClick={() => {
+                    setCursorTailInfo('');
+                    setCursorTailError('');
+                    setCursorPendingUserPrompt(null);
+                  }}
                 >
                   清空
                 </button>
               </div>
             </div>
+            {!asrSessionId ||
+            !SESSION_UUID_RE.test(String(asrSessionId)) ||
+            cursorEnsureStatus === 'loading' ||
+            cursorEnsureStatus === 'error' ? (
+              <div className="cursor-external-thread-panel">
+                {!asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId)) ? (
+                  <p className="sessions-muted">
+                    选择或新建工作会话后，将自动关联 Cursor 对话（复制/发送指令时会带上 --resume）。
+                  </p>
+                ) : cursorEnsureStatus === 'loading' ? (
+                  <p className="cursor-external-thread-status">正在关联 Cursor 对话…</p>
+                ) : (
+                  <div className="cursor-external-thread-error-block">
+                    <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
+                    <button
+                      type="button"
+                      className="btn-editor-secondary"
+                      onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
+                    >
+                      重试
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
             <div className="agent-messages" ref={cursorPanelScrollRef}>
-              {cursorCliMessages.length === 0 ? (
+              {!String(cursorTailInfo).trim() &&
+              !String(cursorTailError).trim() &&
+              !cursorPendingUserPrompt ? (
                 <p className="agent-empty">发送第一条消息后，回复会显示在这里。</p>
               ) : (
-                cursorCliMessages.map((m, i) => (
-                  <div
-                    key={`${i}-${m.role}-${m.content.slice(0, 12)}`}
-                    className={`agent-bubble agent-bubble--${m.role}`}
-                  >
-                    <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
-                    <div
-                      className={`agent-bubble-text ${m.role === 'assistant' ? 'agent-bubble-text--md' : ''}`}
-                    >
-                      {m.role === 'assistant' ? (
-                        <AssistantMarkdown text={m.content} />
-                      ) : (
-                        m.content
-                      )}
+                <>
+                  {cursorPendingUserPrompt ? (
+                    <div className="agent-bubble agent-bubble--user">
+                      <div className="agent-bubble-role">你</div>
+                      <div className="agent-bubble-text">{cursorPendingUserPrompt}</div>
                     </div>
-                  </div>
-                ))
+                  ) : null}
+                  {String(cursorTailInfo).trim() || String(cursorTailError).trim() ? (
+                    <CursorCliStructuredView
+                      parsed={cursorParsedOutput}
+                      stderr={cursorTailError}
+                      formatHint={cursorStreamFormatHint}
+                    />
+                  ) : null}
+                </>
               )}
             </div>
           </aside>
@@ -1931,7 +2053,7 @@ export default function HomePage() {
                 {cursorWorkbenchTriadLabels.length === 0 ? (
                   <p className="cli-params-cursor-empty">
                     当前指令模板里没有 <code>&lt;模型&gt;</code>、<code>&lt;工作空间&gt;</code>、
-                    <code>&lt;输出路径&gt;</code> 占位，无需在此填写；标准输出/错误路径等在目标详情配置。
+                    <code>&lt;输出路径&gt;</code> 占位，无需在此填写；<code>--resume</code> 由工作台在复制/发送时自动追加（需已绑定会话并完成关联）。
                   </p>
                 ) : (
                   cursorWorkbenchTriadLabels.map((lab) => {
@@ -1940,7 +2062,7 @@ export default function HomePage() {
                         ? { title: '--model（模型名）', ph: '例如 grok-code、sonnet-4 等' }
                         : lab === '工作空间'
                           ? { title: '工作空间（编程目录）', ph: '/path/to/your/repo' }
-                          : { title: '输出路径（--resume）', ph: '/path/to/session.jsonl 或标识串' };
+                          : { title: '输出路径（模板自定义）', ph: '按您在目标详情中的占位含义填写' };
                     return (
                       <label key={lab} className="cli-mode-label">
                         {meta.title}

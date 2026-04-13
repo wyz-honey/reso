@@ -36,6 +36,84 @@ export async function fetchCursorSessionPaths(sessionId: string) {
   return data;
 }
 
+export type SessionExternalThreadRow = {
+  provider: string;
+  threadId: string;
+  updatedAt: string;
+};
+
+/** GET /api/sessions/:id/external-threads */
+export async function fetchSessionExternalThreads(sessionId: string): Promise<SessionExternalThreadRow[]> {
+  const sid = String(sessionId || '').trim();
+  const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/external-threads`);
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载外部 CLI 映射失败 (${r.status})`));
+  const threads = data.threads;
+  if (!Array.isArray(threads)) return [];
+  return threads.filter(
+    (x: unknown): x is SessionExternalThreadRow =>
+      x != null &&
+      typeof x === 'object' &&
+      typeof (x as SessionExternalThreadRow).provider === 'string' &&
+      typeof (x as SessionExternalThreadRow).threadId === 'string'
+  );
+}
+
+/** PUT /api/sessions/:id/external-threads/:provider body { threadId }；空字符串表示删除该映射 */
+export async function apiPutSessionExternalThread(
+  sessionId: string,
+  provider: string,
+  threadId: string
+): Promise<void> {
+  const sid = String(sessionId || '').trim();
+  const r = await fetch(
+    `/api/sessions/${encodeURIComponent(sid)}/external-threads/${encodeURIComponent(provider)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadId }),
+    }
+  );
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `保存外部 CLI 映射失败 (${r.status})`));
+}
+
+export async function apiDeleteSessionExternalThread(sessionId: string, provider: string): Promise<void> {
+  const sid = String(sessionId || '').trim();
+  const r = await fetch(
+    `/api/sessions/${encodeURIComponent(sid)}/external-threads/${encodeURIComponent(provider)}`,
+    { method: 'DELETE' }
+  );
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `清除外部 CLI 映射失败 (${r.status})`));
+}
+
+/** POST …/ensure：有映射则复用，否则本机执行 agent create-chat 并落库 */
+export async function apiEnsureSessionExternalThread(
+  sessionId: string,
+  provider: string
+): Promise<{ threadId: string; created: boolean }> {
+  const sid = String(sessionId || '').trim();
+  const r = await fetch(
+    `/api/sessions/${encodeURIComponent(sid)}/external-threads/${encodeURIComponent(provider)}/ensure`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+  );
+  const data = await parseJson(r);
+  if (!r.ok) {
+    const base = String(data.error || '').trim();
+    const detail = typeof data.detail === 'string' && data.detail.trim() ? data.detail.trim() : '';
+    if (detail) throw new Error(base ? `${base}：${detail}` : detail);
+    if (base) throw new Error(base);
+    throw new Error(`关联 Cursor 对话失败（HTTP ${r.status}）`);
+  }
+  const threadId = typeof data.threadId === 'string' ? data.threadId.trim() : '';
+  if (!threadId) throw new Error('服务器未返回有效关联结果');
+  return {
+    threadId,
+    created: Boolean(data.created),
+  };
+}
+
 export async function apiSaveParagraph(sessionId: string, content: string) {
   const r = await fetch(`/api/sessions/${sessionId}/paragraphs`, {
     method: 'POST',

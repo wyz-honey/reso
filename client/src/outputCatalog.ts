@@ -8,9 +8,12 @@ import { useOutputRevisionStore } from './stores/outputRevisionStore.js';
 
 const CUSTOM_KEY = 'reso_custom_outputs_v1';
 
+/** 与 session_external_threads.provider 对应；其它 CLI（如 Qoder）可另设 provider 键 */
+export const CURSOR_EXTERNAL_THREAD_PROVIDER = 'cursor_agent';
+
 export const CURSOR_CLI_DEFAULT_TEMPLATE = `agent \\
 -p <输入> \\
--w <工作空间> \\
+--workspace <工作空间> \\
 --force \\
 --output-format stream-json \\
 --model <模型> \\
@@ -174,10 +177,11 @@ export function getBuiltinOutputs() {
       deliveryType: 'cursor_cli',
       requestUrl: '（本机）拼接 agent 指令并复制到剪贴板',
       outputShape:
-        '占位：<输入>、<工作空间>（-w）、<模型>、<输出正常信息地址>、<输出错误信息地址>；后两项默认可为系统类型，路径由会话绑定解析。',
+        '占位：<输入>、<工作空间>、<模型>、输出重定向；复制/发送时自动在重定向前插入 --resume（关联会话）；服务端需可执行 agent create-chat。',
       extensions: {
         commandTemplate: CURSOR_CLI_DEFAULT_TEMPLATE,
         angleSlots: mergeAngleSlotsWithDefaults(CURSOR_CLI_DEFAULT_TEMPLATE, []),
+        externalThreadProvider: CURSOR_EXTERNAL_THREAD_PROVIDER,
       },
     },
   ];

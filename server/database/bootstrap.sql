@@ -11,6 +11,14 @@ CREATE TABLE IF NOT EXISTS paragraphs (
 );
 CREATE INDEX IF NOT EXISTS idx_paragraphs_session_id ON paragraphs(session_id);
 
+CREATE TABLE IF NOT EXISTS session_external_threads (
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, provider)
+);
+
 CREATE TABLE IF NOT EXISTS chat_threads (
   id UUID PRIMARY KEY,
   mode_id TEXT NOT NULL,

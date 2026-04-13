@@ -9,6 +9,40 @@ export function shellQuoteSingle(arg: unknown): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** 最终命令里是否已含 --resume（避免与模板或自动追加重复） */
+export function cliCommandHasResumeFlag(cmd: unknown): boolean {
+  return /(?:^|[\s\\])--resume(?:\s|=|$)/.test(String(cmd ?? ''));
+}
+
+/**
+ * Cursor：在复制/发送的最终命令上自动插入 `--resume '<threadId>'`，放在首个输出重定向行（`>`）之前；
+ * 无重定向行则插在末尾。已有 --resume 时不改。
+ */
+export function appendCursorAutoResume(cmd: unknown, threadId: unknown): string {
+  const c = String(cmd ?? '');
+  const id = String(threadId ?? '').trim();
+  if (!id || cliCommandHasResumeFlag(c)) return c;
+  const q = shellQuoteSingle(id);
+  const t = c.trimEnd();
+  const lines = t.split(/\r?\n/);
+  let redirectLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*2\s*>/.test(lines[i])) continue;
+    if (/^\s*>/.test(lines[i])) {
+      redirectLineIdx = i;
+      break;
+    }
+  }
+  if (redirectLineIdx >= 0) {
+    const before = lines.slice(0, redirectLineIdx).join('\n');
+    const after = lines.slice(redirectLineIdx).join('\n');
+    return before ? `${before} --resume ${q} \\\n${after}` : `${t} --resume ${q}`;
+  }
+  const m = t.match(/^([\s\S]+?)(\s+>[\s\S]+)$/);
+  if (m) return `${m[1]} --resume ${q}${m[2]}`;
+  return `${t} --resume ${q}`;
+}
+
 function safeSessionToken(sessionId: unknown): string {
   const s = String(sessionId || '').trim();
   if (!s) return '';
@@ -72,12 +106,19 @@ function labelSuggestsCursorStderr(label: unknown): boolean {
   return /输出错误信息地址|^stderr$|错误信息|error\.txt/i.test(String(label || '').trim());
 }
 
+function labelSuggestsExternalThread(label: unknown): boolean {
+  return /外部CLI线程|外部会话|CLI线程|cli线程|chatid|thread_id|cursor.*thread/i.test(
+    String(label || '').trim()
+  );
+}
+
 export const ANGLE_SYSTEM_FIELDS = [
   'paragraph',
   'sessionId',
   'workspace',
   'cursorStdout',
   'cursorStderr',
+  'externalThread',
 ] as const;
 
 export type AngleSystemField = (typeof ANGLE_SYSTEM_FIELDS)[number];
@@ -137,6 +178,15 @@ export function mergeAngleSlotsWithDefaults(
         customValue: '',
       };
     }
+    if (labelSuggestsExternalThread(label)) {
+      return {
+        key: randomSlotKey(),
+        label,
+        source: 'system',
+        systemField: 'externalThread',
+        customValue: '',
+      };
+    }
     if (shouldDefaultCustomSource(label) || !labelSuggestsParagraphSlot(label)) {
       return {
         key: randomSlotKey(),
@@ -172,6 +222,8 @@ export interface CliContext {
   workspace?: string;
   cursorStdoutAbsPath?: string;
   cursorStderrAbsPath?: string;
+  /** 当前输出配置的 externalThreadProvider 在 DB 中解析出的线程 ID（如 Cursor agent chatId） */
+  externalThreadId?: string;
 }
 
 function formatSystemValue(field: string, ctx: CliContext): string {
@@ -181,6 +233,7 @@ function formatSystemValue(field: string, ctx: CliContext): string {
     workspace = '',
     cursorStdoutAbsPath = '',
     cursorStderrAbsPath = '',
+    externalThreadId = '',
   } = ctx;
   switch (field) {
     case 'sessionId':
@@ -196,6 +249,11 @@ function formatSystemValue(field: string, ctx: CliContext): string {
       const p = String(cursorStderrAbsPath || '').trim();
       if (!p) return '';
       return shellQuoteSingle(p);
+    }
+    case 'externalThread': {
+      const t = String(externalThreadId || '').trim();
+      if (!t) return '';
+      return shellQuoteSingle(t);
     }
     case 'paragraph':
     default:
