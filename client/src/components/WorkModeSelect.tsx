@@ -1,4 +1,4 @@
-import GroupedSelect from './GroupedSelect.js';
+import GroupedSelect from './GroupedSelect';
 
 /** 工作台工作模式：内置 / 自定义分组；末尾无分组项为「添加自定义目标」（打开弹窗，不切换模式）。 */
 const ADD_CUSTOM_SENTINEL = '__reso_add_custom_target__';

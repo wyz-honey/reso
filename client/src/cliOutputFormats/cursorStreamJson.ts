@@ -1,5 +1,5 @@
-import { applyToolToSnapshots } from './cursorToolDiff.js';
-import type { CliOutputFormatId, CursorStreamBlock, ParsedCliOutput } from './types.js';
+import { applyToolToSnapshots } from './cursorToolDiff';
+import type { CliOutputFormatId, CursorStreamBlock, ParsedCliOutput } from './types';
 
 function asRecord(x: unknown): Record<string, unknown> | null {
   return x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : null;

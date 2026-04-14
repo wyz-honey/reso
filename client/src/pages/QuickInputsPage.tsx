@@ -4,7 +4,7 @@ import {
   apiDeleteQuickInput,
   apiUpdateQuickInput,
   fetchQuickInputs,
-} from '../api.js';
+} from '../api';
 import '../App.css';
 
 function notifyQuickInputsChanged() {

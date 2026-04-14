@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import HomePage from './pages/HomePage.js';
-import OutputsPage from './pages/OutputsPage.js';
-import OutputDetailPage from './pages/OutputDetailPage.js';
-import SettingsPage from './pages/SettingsPage.js';
-import ModelProvidersPage from './pages/ModelProvidersPage.js';
-import QuickInputsPage from './pages/QuickInputsPage.js';
-import SessionsPage from './pages/SessionsPage.js';
+import HomePage from './pages/HomePage';
+import OutputsPage from './pages/OutputsPage';
+import OutputDetailPage from './pages/OutputDetailPage';
+import SettingsPage from './pages/SettingsPage';
+import ModelProvidersPage from './pages/ModelProvidersPage';
+import QuickInputsPage from './pages/QuickInputsPage';
+import SessionsPage from './pages/SessionsPage';
 import './App.css';
 
 const SIDEBAR_COLLAPSED_KEY = 'reso_sidebar_collapsed_v1';

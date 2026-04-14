@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { getVoiceSettings } from './voiceSettingsStore.js';
+import { getVoiceSettings } from './voiceSettingsStore';
 
 const STORAGE_KEY = 'reso_model_providers_v1';
 

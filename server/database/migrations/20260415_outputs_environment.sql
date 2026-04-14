@@ -1,0 +1,1 @@
+ALTER TABLE outputs ADD COLUMN IF NOT EXISTS environment JSONB NOT NULL DEFAULT '{}'::jsonb;

@@ -1,4 +1,4 @@
-function floatTo16BitPCM(input) {
+function floatTo16BitPCM(input: Float32Array): Uint8Array {
   const buf = new ArrayBuffer(input.length * 2);
   const view = new DataView(buf);
   for (let i = 0; i < input.length; i++) {
@@ -8,7 +8,7 @@ function floatTo16BitPCM(input) {
   return new Uint8Array(buf);
 }
 
-function downsampleTo16kPcm(buffer, inputSampleRate) {
+function downsampleTo16kPcm(buffer: Float32Array, inputSampleRate: number): Uint8Array {
   const outputSampleRate = 16000;
   if (inputSampleRate === outputSampleRate) {
     return floatTo16BitPCM(buffer);
@@ -26,17 +26,25 @@ function downsampleTo16kPcm(buffer, inputSampleRate) {
   return floatTo16BitPCM(result);
 }
 
+type PcmProcessorInit = { chunkSamples?: number };
+
 class PcmCaptureProcessor extends AudioWorkletProcessor {
-  constructor(options) {
+  private chunkIn: number;
+  private buf: Float32Array;
+  private len: number;
+  private readonly inRate: number;
+
+  constructor(options?: AudioWorkletNodeOptions) {
     super();
-    const chunk = options.processorOptions?.chunkSamples ?? 4096;
+    const po = options?.processorOptions as PcmProcessorInit | undefined;
+    const chunk = po?.chunkSamples ?? 4096;
     this.chunkIn = chunk;
     this.buf = new Float32Array(chunk + 256);
     this.len = 0;
     this.inRate = sampleRate;
   }
 
-  process(inputs, outputs) {
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const ch0 = inputs[0]?.[0];
     const out0 = outputs[0]?.[0];
     if (ch0 && out0 && ch0.length === out0.length) {

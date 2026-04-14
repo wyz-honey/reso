@@ -3,8 +3,9 @@
  * 新建输出仅支持 HTTP、CLI；历史数据仍可能含 agent_chat / command 等。
  */
 
-import { mergeAngleSlotsWithDefaults } from './cliSubstitute.js';
-import { useOutputRevisionStore } from './stores/outputRevisionStore.js';
+import { normalizeCliEnvRecord } from './cliEnv';
+import { mergeAngleSlotsWithDefaults } from './cliSubstitute';
+import { useOutputRevisionStore } from './stores/outputRevisionStore';
 
 const CUSTOM_KEY = 'reso_custom_outputs_v1';
 
@@ -120,6 +121,12 @@ export function saveBuiltinOutputOverride(
     requestUrl: patch.requestUrl !== undefined ? String(patch.requestUrl) : prev.requestUrl,
     outputShape: patch.outputShape !== undefined ? String(patch.outputShape) : prev.outputShape,
   };
+  if (patch.environment !== undefined) {
+    next.environment =
+      patch.environment && typeof patch.environment === 'object' && !Array.isArray(patch.environment)
+        ? normalizeCliEnvRecord(patch.environment)
+        : {};
+  }
   if (patch.extensions !== undefined) {
     next.extensions =
       patch.extensions && typeof patch.extensions === 'object' && !Array.isArray(patch.extensions)
@@ -130,6 +137,10 @@ export function saveBuiltinOutputOverride(
             ...patch.extensions,
           }
         : prev.extensions;
+    if (id === 'builtin-cursor' && next.extensions && typeof next.extensions === 'object') {
+      const { externalThreadProvider: _etp, ...rest } = next.extensions as Record<string, unknown>;
+      next.extensions = rest;
+    }
   }
   cur[id] = next;
   writeBuiltinOverrides(cur);
@@ -175,13 +186,11 @@ export function getBuiltinOutputs() {
       description:
         '本机执行 `agent`：正文进 `-p`；标准输出/错误默认重定向到服务端目录 server/outputs/cursor/<会话ID>/info.txt 与 error.txt，工作台 WebSocket 实时展示。',
       deliveryType: 'cursor_cli',
-      requestUrl: '（本机）拼接 agent 指令并复制到剪贴板',
-      outputShape:
-        '占位：<输入>、<工作空间>、<模型>、输出重定向；复制/发送时自动在重定向前插入 --resume（关联会话）；服务端需可执行 agent create-chat。',
+      requestUrl: '',
+      outputShape: '',
       extensions: {
         commandTemplate: CURSOR_CLI_DEFAULT_TEMPLATE,
         angleSlots: mergeAngleSlotsWithDefaults(CURSOR_CLI_DEFAULT_TEMPLATE, []),
-        externalThreadProvider: CURSOR_EXTERNAL_THREAD_PROVIDER,
       },
     },
   ];
@@ -200,7 +209,15 @@ export function getMergedBuiltinOutputs() {
       p.extensions && typeof p.extensions === 'object' && !Array.isArray(p.extensions)
         ? p.extensions
         : null;
-    const extensions = patchExt ? { ...baseExt, ...patchExt } : { ...baseExt };
+    let extensions = patchExt ? { ...baseExt, ...patchExt } : { ...baseExt };
+    if (b.id === 'builtin-cursor' && extensions && typeof extensions === 'object') {
+      const { externalThreadProvider: _e, ...rest } = extensions as Record<string, unknown>;
+      extensions = rest;
+    }
+    const topEnv =
+      p.environment && typeof p.environment === 'object' && !Array.isArray(p.environment)
+        ? normalizeCliEnvRecord(p.environment)
+        : undefined;
     return {
       ...b,
       name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : b.name,
@@ -208,6 +225,7 @@ export function getMergedBuiltinOutputs() {
       requestUrl: typeof p.requestUrl === 'string' ? p.requestUrl : b.requestUrl,
       outputShape: typeof p.outputShape === 'string' ? p.outputShape : b.outputShape,
       extensions,
+      ...(topEnv && Object.keys(topEnv).length > 0 ? { environment: topEnv } : {}),
     };
   });
 }
@@ -328,9 +346,20 @@ export function updateCustomOutput(id: string, patch: Record<string, unknown>) {
       patch.targetKind === TARGET_KINDS.agent || patch.targetKind === TARGET_KINDS.api
         ? patch.targetKind
         : inferTargetKind(nextDt as string);
+    let patchOut = patch;
+    if (
+      nextDt === 'cursor_cli' &&
+      patch.extensions &&
+      typeof patch.extensions === 'object' &&
+      !Array.isArray(patch.extensions)
+    ) {
+      const ex = { ...(patch.extensions as Record<string, unknown>) };
+      delete ex.externalThreadProvider;
+      patchOut = { ...patch, extensions: ex };
+    }
     return {
       ...row,
-      ...patch,
+      ...patchOut,
       targetKind: nextTk,
       updatedAt: now,
     };

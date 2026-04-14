@@ -1,17 +1,25 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
+import OutputVoiceControlSection from '../components/OutputVoiceControlSection';
+import {
+  parseOutputVoiceControl,
+  serializeOutputVoiceControl,
+  type OutputVoiceControl,
+} from '../outputVoiceControl';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
-  CURSOR_EXTERNAL_THREAD_PROVIDER,
   listAllOutputs,
   saveBuiltinOutputOverride,
   updateCustomOutput,
-} from '../outputCatalog.js';
-import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor.js';
-import CliInstructionHeader from '../components/CliInstructionHeader.js';
-import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../cliSubstitute.js';
-import ResoAgentPage from './ResoAgentPage.js';
+} from '../outputCatalog';
+import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor';
+import CliInstructionHeader from '../components/CliInstructionHeader';
+import CliEnvEditor from '../components/CliEnvEditor';
+import { mergeTargetEnvLayers, normalizeCliEnvRecord } from '../cliEnv';
+import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../cliSubstitute';
+import { deriveCursorCliWorkspace } from '../cursorTriad';
+import ResoAgentPage from './ResoAgentPage';
 import '../App.css';
 
 function formatTs(iso) {
@@ -32,17 +40,15 @@ function CursorOutputDetail({ row, onSaved }) {
       : CURSOR_CLI_DEFAULT_TEMPLATE;
   const [name, setName] = useState(row.name || '');
   const [description, setDescription] = useState(row.description || '');
-  const [requestUrl, setRequestUrl] = useState(row.requestUrl || '');
-  const [outputShape, setOutputShape] = useState(row.outputShape || '');
   const [commandTemplate, setCommandTemplate] = useState(initialTmpl);
   const [angleSlots, setAngleSlots] = useState(
     () => mergeAngleSlotsWithDefaults(initialTmpl, Array.isArray(ext.angleSlots) ? ext.angleSlots : [])
   );
-  const [externalThreadProvider, setExternalThreadProvider] = useState(
-    () =>
-      typeof ext.externalThreadProvider === 'string' && ext.externalThreadProvider.trim()
-        ? ext.externalThreadProvider.trim()
-        : CURSOR_EXTERNAL_THREAD_PROVIDER
+  const [voiceControl, setVoiceControl] = useState<OutputVoiceControl>(() =>
+    parseOutputVoiceControl(ext.voiceControl, 'cursor_cli')
+  );
+  const [targetEnv, setTargetEnv] = useState(() =>
+    mergeTargetEnvLayers(ext.cliEnv, ext.environment, row.environment)
   );
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -52,29 +58,38 @@ function CursorOutputDetail({ row, onSaved }) {
     setErr('');
     const tmpl = commandTemplate.trim();
     if (!tmpl) {
-      setErr('请填写指令模板');
+      setErr('请填写执行指令');
       return;
     }
+    const mergedSlots = mergeAngleSlotsWithDefaults(tmpl, angleSlots);
+    const prevWs =
+      typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '';
+    const envNorm = normalizeCliEnvRecord(targetEnv);
     const nextExt = {
       commandTemplate: tmpl,
-      angleSlots: mergeAngleSlotsWithDefaults(tmpl, angleSlots),
-      externalThreadProvider: externalThreadProvider.trim() || CURSOR_EXTERNAL_THREAD_PROVIDER,
+      angleSlots: mergedSlots,
+      cliWorkspace: deriveCursorCliWorkspace(mergedSlots, prevWs),
+      voiceControl: serializeOutputVoiceControl(voiceControl),
+      environment: envNorm,
+      cliEnv: envNorm,
     };
     try {
       if (row.builtin) {
         saveBuiltinOutputOverride(row.id, {
           name: name.trim(),
           description,
-          requestUrl,
-          outputShape,
+          requestUrl: '',
+          outputShape: '',
+          environment: envNorm,
           extensions: nextExt,
         });
       } else {
         updateCustomOutput(row.id, {
           name: name.trim(),
           description,
-          requestUrl,
-          outputShape,
+          requestUrl: '',
+          outputShape: '',
+          environment: envNorm,
           extensions: nextExt,
         });
       }
@@ -101,9 +116,9 @@ function CursorOutputDetail({ row, onSaved }) {
             </NavLink>
             <h1 className="sessions-title">Cursor 目标</h1>
             <p className="sessions-subtitle">
-              Agent 类 CLI：工作台只会要求填写<strong>指令模板里出现</strong>的 <code className="settings-code">&lt;模型&gt;</code>、
-              <code className="settings-code">&lt;工作空间&gt;</code>、<code className="settings-code">&lt;外部CLI线程&gt;</code> 等占位；
-              绑定工作会话后，侧栏会自动关联 Cursor 对话（运行 Reso 服务的机器需可执行 <code className="settings-code">agent create-chat</code>）；复制/发送时会自动追加 <code className="settings-code">--resume</code>。段落为每次发送时的 <code className="settings-code">-p</code> 内容。
+              在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
+              绑定数据库会话后自动关联 Cursor 线程；复制/发送时若无 <code className="settings-code">--resume</code> 会自动插入。正文即每次的{' '}
+              <code className="settings-code">-p</code>。
             </p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id" title={row.id}>
@@ -135,47 +150,17 @@ function CursorOutputDetail({ row, onSaved }) {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
-            <label className="settings-label">
-              请求说明（入参）
-              <input className="settings-input" value={requestUrl} onChange={(e) => setRequestUrl(e.target.value)} />
-            </label>
-            <label className="settings-label">
-              输出结构说明
-              <textarea
-                className="settings-textarea"
-                rows={4}
-                value={outputShape}
-                onChange={(e) => setOutputShape(e.target.value)}
-              />
-            </label>
           </section>
 
           <section className="settings-category">
-            <h2 className="settings-section-title">指令模板与占位</h2>
+            <h2 className="settings-section-title">执行指令</h2>
             <p className="settings-category-lead">
-              默认含 <code className="settings-code">&lt;输入&gt;</code>、<code className="settings-code">&lt;工作空间&gt;</code>（<code className="settings-code">--workspace</code>）、
-              <code className="settings-code">&lt;模型&gt;</code>、<code className="settings-code">&lt;输出正常信息地址&gt;</code>、
-              <code className="settings-code">&lt;输出错误信息地址&gt;</code>；复制/发送时会在重定向前自动插入 <code className="settings-code">--resume</code>（与当前工作会话关联）。
-              后两项默认可选「系统」，解析为 <code className="settings-code">server/outputs/cursor/&lt;会话ID&gt;/</code> 下文件。若模板中自行写了 <code className="settings-code">--resume</code>，则不会重复追加。
+              与终端里要跑的命令一致；用 <code className="settings-code">&lt;标签&gt;</code>{' '}
+              标记可变部分，下面「动态参数」会按每个标签单独配置。
             </p>
-            <details className="settings-details settings-details--advanced">
-              <summary className="settings-details-summary">高级：多 CLI 厂商映射键</summary>
-              <p className="settings-category-lead settings-category-lead--tight">
-                一般无需修改。若接入其它 CLI（如 Qoder），可改此键以区分库表映射；默认与自动关联逻辑一致。
-              </p>
-              <label className="settings-label">
-                映射键
-                <input
-                  className="settings-input"
-                  value={externalThreadProvider}
-                  onChange={(e) => setExternalThreadProvider(e.target.value)}
-                  placeholder={CURSOR_EXTERNAL_THREAD_PROVIDER}
-                  spellCheck={false}
-                />
-              </label>
-            </details>
             <div className="outputs-expand-label outputs-expand-label--cli-template">
               <CliInstructionHeader
+                title="执行指令"
                 onExample={() => {
                   setCommandTemplate(CURSOR_CLI_DEFAULT_TEMPLATE);
                   setAngleSlots(buildAllCustomAngleSlots(CURSOR_CLI_DEFAULT_TEMPLATE));
@@ -187,14 +172,31 @@ function CursorOutputDetail({ row, onSaved }) {
                 onChange={(e) => onTemplateChange(e.target.value)}
                 spellCheck={false}
                 rows={10}
-                aria-label="Cursor 指令模板"
+                aria-label="Cursor 执行指令"
               />
             </div>
             <CliAngleSlotsEditor
               slots={mergeAngleSlotsWithDefaults(commandTemplate, angleSlots)}
               onChange={setAngleSlots}
+              sectionTitle="动态参数"
+              sectionHint="与指令里的尖括号一一对应。编程目录选「系统 · 工作区路径」时，默认值仍保存在本目标（上次保存的 extensions）；若选「自定义」则路径以这里填写的为准。"
+              useCursorAgentModelPicker
             />
           </section>
+
+          <section className="settings-category">
+            <h2 className="settings-section-title">环境变量（可选）</h2>
+            <p className="settings-category-lead">
+              服务端执行 <code className="settings-code">agent create-chat</code> 等时，可按此处补全进程环境（与顶部工作台一致）。
+            </p>
+            <CliEnvEditor value={targetEnv} onChange={setTargetEnv} lead={null} />
+          </section>
+
+          <OutputVoiceControlSection
+            value={voiceControl}
+            onChange={setVoiceControl}
+            lead="工作台在 Cursor 目标下识别时，按此处规则自动提交或仅手动发送。"
+          />
 
           <div className="settings-actions">
             <button type="submit" className="btn-primary-nav">
@@ -207,7 +209,26 @@ function CursorOutputDetail({ row, onSaved }) {
   );
 }
 
-function AsrReadonlyDetail({ row }) {
+function AsrBuiltinDetail({ row, onSaved }) {
+  const ext =
+    row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
+      ? row.extensions
+      : {};
+  const [voiceControl, setVoiceControl] = useState(() =>
+    parseOutputVoiceControl(ext.voiceControl, 'paragraph_clipboard')
+  );
+  const [msg, setMsg] = useState('');
+
+  const onSave = (e) => {
+    e.preventDefault();
+    saveBuiltinOutputOverride(row.id, {
+      extensions: { voiceControl: serializeOutputVoiceControl(voiceControl) },
+    });
+    setMsg('已保存');
+    onSaved?.();
+    setTimeout(() => setMsg(''), 2200);
+  };
+
   return (
     <div className="sessions-page reso-agent-page output-detail-page">
       <div className="sessions-view-stack">
@@ -217,21 +238,37 @@ function AsrReadonlyDetail({ row }) {
               ← 目标管理
             </NavLink>
             <h1 className="sessions-title">{row.name}</h1>
-            <p className="sessions-subtitle">内置标准模式为只读说明，无需在此修改。</p>
+            <p className="sessions-subtitle">
+              内置标准模式：可配置识别结束策略；行为说明见下方只读摘要。
+            </p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id">{row.id}</code>
             </p>
           </div>
         </div>
-        <div className="settings-card reso-agent-form">
-          <p className="sessions-muted">{row.description}</p>
-          <p className="sessions-muted">
-            <strong>请求说明</strong> {row.requestUrl}
-          </p>
-          <p className="sessions-muted">
-            <strong>输出结构</strong> {row.outputShape}
-          </p>
-        </div>
+        {msg ? <p className="sessions-msg sessions-alert">{msg}</p> : null}
+        <form className="settings-card reso-agent-form" onSubmit={onSave}>
+          <section className="settings-category">
+            <h2 className="settings-section-title">说明（只读）</h2>
+            <p className="sessions-muted">{row.description}</p>
+            <p className="sessions-muted">
+              <strong>请求说明</strong> {row.requestUrl}
+            </p>
+            <p className="sessions-muted">
+              <strong>输出结构</strong> {row.outputShape}
+            </p>
+          </section>
+          <OutputVoiceControlSection
+            value={voiceControl}
+            onChange={setVoiceControl}
+            lead="工作台在标准模式下识别时，按此处规则自动保存或仅手动提交。"
+          />
+          <div className="settings-actions">
+            <button type="submit" className="btn-primary-nav">
+              保存
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -269,7 +306,7 @@ export default function OutputDetailPage() {
   }
 
   if (row.id === 'builtin-asr') {
-    return <AsrReadonlyDetail row={row} />;
+    return <AsrBuiltinDetail key={`${row.id}-${tick}`} row={row} onSaved={bump} />;
   }
 
   if (row.deliveryType === 'cursor_cli') {

@@ -2,13 +2,34 @@
  * Cursor 工作台：仅当指令模板里出现对应尖括号（如 <模型>）时，才展示并校验该槽；
  * 与目标详情「指令参数」列表一致（由 mergeAngleSlotsWithDefaults 随模板生成）。
  */
-import type { AngleSlot, CliContext } from './cliSubstitute.js';
+import type { AngleSlot, CliContext } from './cliSubstitute';
 import {
   mergeAngleSlotsWithDefaults,
   resolveAngleSlotValue,
   uniqueAngleLabelsInOrder,
-} from './cliSubstitute.js';
-import { CURSOR_CLI_DEFAULT_TEMPLATE } from './outputCatalog.js';
+} from './cliSubstitute';
+
+/** 与默认槽位推断一致：用于保存时把「工作空间」类占位与 extensions.cliWorkspace 对齐 */
+function slotLooksLikeWorkspace(s: AngleSlot): boolean {
+  return (
+    (s.systemField || '') === 'workspace' ||
+    /工作空间|工作区|workspace|repo/i.test(String(s.label || '').trim())
+  );
+}
+
+/**
+ * 工作区路径不再单独表单项：若 &lt;工作空间&gt; 等为「自定义」，其值写入 extensions.cliWorkspace；
+ * 若为「系统·工作区路径」，则保留目标里已有的 cliWorkspace（工作台侧栏与入参弹窗仍会用到）。
+ */
+export function deriveCursorCliWorkspace(
+  mergedSlots: AngleSlot[],
+  previousCliWorkspace: string
+): string {
+  const wsSlot = mergedSlots.find((s) => slotLooksLikeWorkspace(s));
+  if (wsSlot?.source === 'custom') return String(wsSlot.customValue ?? '').trim();
+  return String(previousCliWorkspace ?? '').trim();
+}
+import { CURSOR_CLI_DEFAULT_TEMPLATE } from './outputCatalog';
 
 export const CURSOR_TRIAD_LABELS = ['模型', '工作空间', '输出路径'] as const;
 
@@ -68,6 +89,51 @@ export function cursorTriadComplete(
   return true;
 }
 
+/** 复制/发送前可由前端自动补全：会话、输出路径、agent create-chat 线程 */
+const CURSOR_PROVISIONING_OPTIONAL_SYSTEM = new Set([
+  'cursorStdout',
+  'cursorStderr',
+  'externalThread',
+  'sessionId',
+]);
+
+/**
+ * 用户侧已就绪即可点「发送」：不强制已有 DB 会话、tail 路径或 Cursor 线程映射
+ *（首次发送时会自动建会话、拉路径并调用与官方一致的 `agent create-chat` ensure）。
+ */
+export function cursorCliReadyIgnoringProvisioningDeps(
+  template: unknown,
+  slots: unknown,
+  ctx: CliContext | null | undefined
+) {
+  const merged = mergeAngleSlotsWithDefaults(template, slots);
+  const { paragraph = '', sessionId = '', workspace = '' } = ctx || {};
+  const labels = cursorTriadLabelsInTemplate(template);
+  for (const lab of labels) {
+    const s = merged.find((x) => x.label === lab);
+    if (!s) return false;
+    if (s.source === 'custom') {
+      if (!String(s.customValue ?? '').trim()) return false;
+    } else {
+      const f = s.systemField || 'paragraph';
+      if (CURSOR_PROVISIONING_OPTIONAL_SYSTEM.has(f)) continue;
+      if (f === 'paragraph' && !String(paragraph).trim()) return false;
+      if (f === 'workspace' && !String(workspace).trim()) return false;
+    }
+  }
+  for (const s of merged) {
+    if (s.source === 'system' && (s.systemField || 'paragraph') === 'paragraph') {
+      if (!String(ctx?.paragraph ?? '').trim()) return false;
+      continue;
+    }
+    const f = s.systemField || 'paragraph';
+    if (s.source === 'system' && CURSOR_PROVISIONING_OPTIONAL_SYSTEM.has(f)) continue;
+    const v = resolveAngleSlotValue(s, ctx || {});
+    if (!String(v).trim()) return false;
+  }
+  return true;
+}
+
 export function cursorCliReady(
   template: unknown,
   slots: unknown,
@@ -111,9 +177,15 @@ export function cursorCliFillHint(
   const needsStdout = merged.some((s) => s.source === 'system' && s.systemField === 'cursorStdout');
   const needsStderr = merged.some((s) => s.source === 'system' && s.systemField === 'cursorStderr');
   if (needsStdout && !String(ctx?.cursorStdoutAbsPath || '').trim()) {
+    if (!String(ctx?.sessionId || '').trim()) {
+      return '发送时将自动创建数据库会话并生成本会话的 Cursor 输出路径（与官方 agent 重定向一致）';
+    }
     return '请绑定数据库会话，或把 <输出正常信息地址> 改为自定义路径（需与本机 agent 写入位置一致）';
   }
   if (needsStderr && !String(ctx?.cursorStderrAbsPath || '').trim()) {
+    if (!String(ctx?.sessionId || '').trim()) {
+      return '发送时将自动创建数据库会话并生成本会话的 Cursor 输出路径';
+    }
     return '请绑定数据库会话，或把 <输出错误信息地址> 改为自定义路径';
   }
   const needsExt = merged.some((s) => s.source === 'system' && s.systemField === 'externalThread');

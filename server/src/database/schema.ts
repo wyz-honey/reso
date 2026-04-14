@@ -1,5 +1,9 @@
+import { sql } from 'drizzle-orm';
 import {
+  boolean,
+  index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -62,3 +66,37 @@ export const quickInputs = pgTable('quick_inputs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * 工作台「目标」与客户端 outputCatalog 条目一一对应。
+ * 结构化列存主字段；识别结束策略、CLI 占位、httpProtocol 等放在 extensions（与前端 extensions JSON 一致）。
+ */
+export const outputs = pgTable(
+  'outputs',
+  {
+    id: text('id').primaryKey(),
+    builtin: boolean('builtin').notNull().default(false),
+    legacy: boolean('legacy').notNull().default(false),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    deliveryType: text('delivery_type').notNull(),
+    requestUrl: text('request_url').notNull().default(''),
+    outputShape: text('output_shape').notNull().default(''),
+    targetKind: text('target_kind').notNull(),
+    extensions: jsonb('extensions')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** 目标级环境变量（可选）；与客户端 extensions.environment / 旧 cliEnv 对齐，供 CLI 子进程与 HTTP 头发送 */
+    environment: jsonb('environment')
+      .$type<Record<string, string>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    deliveryIdx: index('idx_outputs_delivery_type').on(t.deliveryType),
+    kindIdx: index('idx_outputs_target_kind').on(t.targetKind),
+  })
+);

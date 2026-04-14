@@ -11,6 +11,19 @@ export function getCursorOutputRootResolved(): string {
   );
 }
 
+/** 会话输出目录绝对路径（不创建目录） */
+export function resolveCursorSessionDirAbs(sessionId: string): string {
+  const sid = String(sessionId || '').trim();
+  return path.join(getCursorOutputRootResolved(), sid);
+}
+
+/** 确保 `outputs/cursor/<sessionId>/` 存在；供 REST 与 WS 共用，避免终端重定向时父目录不存在 */
+export function ensureCursorSessionOutputDir(sessionId: string): string {
+  const dirAbs = resolveCursorSessionDirAbs(sessionId);
+  fs.mkdirSync(dirAbs, { recursive: true });
+  return dirAbs;
+}
+
 export function readCursorSessionFilesSync(dirAbs: string): { info: string; error: string } {
   const infoPath = path.join(dirAbs, 'info.txt');
   const errPath = path.join(dirAbs, 'error.txt');

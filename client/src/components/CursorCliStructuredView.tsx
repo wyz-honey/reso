@@ -1,6 +1,6 @@
-import AssistantMarkdown from './AssistantMarkdown.js';
-import CursorCliDiffView from './CursorCliDiffView.js';
-import type { CliParsedBlock, ParsedCliOutput } from '../cliOutputFormats/types.js';
+import AssistantMarkdown from './AssistantMarkdown';
+import CursorCliDiffView from './CursorCliDiffView';
+import type { CliParsedBlock, ParsedCliOutput } from '../cliOutputFormats/types';
 
 function formatUsage(u: Record<string, unknown> | undefined): string {
   if (!u) return '';

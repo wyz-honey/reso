@@ -10,16 +10,23 @@ import {
   listAllOutputs,
   newOutputId,
   updateCustomOutput,
-} from '../outputCatalog.js';
-import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor.js';
-import CliInstructionHeader from '../components/CliInstructionHeader.js';
-import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../cliSubstitute.js';
+} from '../outputCatalog';
+import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor';
+import CliEnvEditor from '../components/CliEnvEditor';
+import CliInstructionHeader from '../components/CliInstructionHeader';
+import { mergeTargetEnvLayers, normalizeCliEnvRecord } from '../cliEnv';
+import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../cliSubstitute';
+import OutputVoiceControlSection from '../components/OutputVoiceControlSection';
+import {
+  parseOutputVoiceControl,
+  serializeOutputVoiceControl,
+} from '../outputVoiceControl';
 import {
   DEFAULT_CLI_TEMPLATE,
   getAllModes,
   removeCustomMode,
   updateLegacyCustomMode,
-} from '../workModes.js';
+} from '../workModes';
 import '../App.css';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -49,6 +56,8 @@ function emptyDraft() {
     cliWorkspace: '',
     systemPrompt: '',
     angleSlots: [],
+    voiceControl: parseOutputVoiceControl(undefined, 'http'),
+    targetEnv: {},
   };
 }
 
@@ -98,6 +107,8 @@ function rowToDraft(row) {
         : '',
     angleSlots:
       row.deliveryType === 'xiaoai' && Array.isArray(ext.angleSlots) ? ext.angleSlots : [],
+    voiceControl: parseOutputVoiceControl(ext.voiceControl, row.deliveryType),
+    targetEnv: mergeTargetEnvLayers(ext.cliEnv, ext.environment, row.environment),
   };
 }
 
@@ -219,7 +230,7 @@ export default function OutputsPage() {
         row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
           ? { ...row.extensions }
           : {};
-      extensions = prevExt;
+      extensions = { ...prevExt };
     } else {
       try {
         extensions = draft.extJson.trim() ? JSON.parse(draft.extJson) : {};
@@ -230,6 +241,17 @@ export default function OutputsPage() {
         setFormErr(e.message || '扩展 JSON 无效');
         return;
       }
+    }
+    extensions = {
+      ...(typeof extensions === 'object' && extensions && !Array.isArray(extensions)
+        ? extensions
+        : {}),
+      voiceControl: serializeOutputVoiceControl(draft.voiceControl),
+    };
+    const envNorm = normalizeCliEnvRecord(draft.targetEnv);
+    if (['http', 'xiaoai', 'command', 'agent_chat'].includes(draft.deliveryType)) {
+      extensions.environment = envNorm;
+      extensions.cliEnv = envNorm;
     }
     if (!draft.name.trim()) {
       setFormErr('请填写名称');
@@ -250,6 +272,9 @@ export default function OutputsPage() {
       requestUrl: draft.requestUrl.trim(),
       outputShape: draft.outputShape.trim(),
       extensions,
+      ...(['http', 'xiaoai', 'command', 'agent_chat'].includes(draft.deliveryType)
+        ? { environment: envNorm }
+        : {}),
     });
     setMsg('已保存');
     refresh();
@@ -286,6 +311,15 @@ export default function OutputsPage() {
         angleSlots: mergeAngleSlotsWithDefaults(tmpl, modalDraft.angleSlots || []),
       };
     }
+    extensions = {
+      ...(typeof extensions === 'object' && extensions && !Array.isArray(extensions)
+        ? extensions
+        : {}),
+      voiceControl: serializeOutputVoiceControl(modalDraft.voiceControl),
+    };
+    const envNormModal = normalizeCliEnvRecord(modalDraft.targetEnv);
+    extensions.environment = envNormModal;
+    extensions.cliEnv = envNormModal;
     if (!modalDraft.name.trim()) {
       setFormErr('请填写名称');
       return;
@@ -313,6 +347,7 @@ export default function OutputsPage() {
             : modalDraft.requestUrl.trim(),
       outputShape: outShape,
       extensions,
+      environment: envNormModal,
     });
     setModalOpen(false);
     setModalDraft(emptyDraft());
@@ -565,183 +600,214 @@ export default function OutputsPage() {
 
                     {expandedId === o.id ? (
                       <div className="outputs-expand">
-                        <label className="outputs-expand-label">
-                          名称
-                          <input
-                            className="sessions-search-input"
-                            value={draft.name}
-                            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                          />
-                        </label>
-                        {o.legacy && !o.builtin ? (
-                          <p className="outputs-legacy-hint">
-                            此为旧版存储条目：保存时仅同步名称与系统提示 / CLI 模板；若要编辑完整说明，请新建输出后删除此项。
-                          </p>
-                        ) : null}
-                        {(o.builtin || !o.legacy) && (
-                          <>
-                            <label className="outputs-expand-label">
-                              描述
-                              <textarea
-                                className="outputs-expand-textarea"
-                                rows={3}
-                                value={draft.description}
-                                onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-                              />
-                            </label>
-                            <label className="outputs-expand-label">
-                              请求地址 / 说明
-                              <input
-                                className="sessions-search-input"
-                                value={draft.requestUrl}
-                                onChange={(e) => setDraft((d) => ({ ...d, requestUrl: e.target.value }))}
-                              />
-                            </label>
-                            <label className="outputs-expand-label">
-                              输出结构说明
-                              <textarea
-                                className="outputs-expand-textarea"
-                                rows={4}
-                                value={draft.outputShape}
-                                onChange={(e) => setDraft((d) => ({ ...d, outputShape: e.target.value }))}
-                              />
-                            </label>
-                          </>
-                        )}
-
-                        {o.legacy && o.deliveryType === 'agent_chat' ? (
+                        <div className="outputs-expand-section">
+                          <h3 className="outputs-expand-section-title">基本信息</h3>
                           <label className="outputs-expand-label">
-                            系统提示（旧版条目）
-                            <textarea
-                              className="outputs-expand-textarea"
-                              rows={5}
-                              value={draft.systemPrompt}
-                              onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
+                            名称
+                            <input
+                              className="sessions-search-input"
+                              value={draft.name}
+                              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                             />
                           </label>
-                        ) : null}
+                          {o.legacy && !o.builtin ? (
+                            <p className="outputs-legacy-hint">
+                              此为旧版存储条目：保存时仅同步名称与系统提示 / CLI 模板；若要编辑完整说明，请新建输出后删除此项。
+                            </p>
+                          ) : null}
+                          {(o.builtin || !o.legacy) && (
+                            <>
+                              <label className="outputs-expand-label">
+                                描述
+                                <textarea
+                                  className="outputs-expand-textarea"
+                                  rows={3}
+                                  value={draft.description}
+                                  onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                                />
+                              </label>
+                              <label className="outputs-expand-label">
+                                请求地址 / 说明
+                                <input
+                                  className="sessions-search-input"
+                                  value={draft.requestUrl}
+                                  onChange={(e) => setDraft((d) => ({ ...d, requestUrl: e.target.value }))}
+                                />
+                              </label>
+                              <label className="outputs-expand-label">
+                                输出结构说明
+                                <textarea
+                                  className="outputs-expand-textarea"
+                                  rows={4}
+                                  value={draft.outputShape}
+                                  onChange={(e) => setDraft((d) => ({ ...d, outputShape: e.target.value }))}
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {o.legacy && o.deliveryType === 'agent_chat' ? (
+                            <label className="outputs-expand-label">
+                              系统提示（旧版条目）
+                              <textarea
+                                className="outputs-expand-textarea"
+                                rows={5}
+                                value={draft.systemPrompt}
+                                onChange={(e) => setDraft((d) => ({ ...d, systemPrompt: e.target.value }))}
+                              />
+                            </label>
+                          ) : null}
+                        </div>
 
                         {!o.builtin && !o.legacy ? (
-                          <label className="outputs-expand-label">
-                            投递类型
-                            <select
-                              className="sessions-filter-select outputs-expand-select"
-                              value={draft.deliveryType}
-                              onChange={(e) => setDraft((d) => ({ ...d, deliveryType: e.target.value }))}
-                            >
-                              {NEW_OUTPUT_DELIVERY_TYPES.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                              {['agent_chat', 'command', 'stream'].includes(draft.deliveryType) ? (
-                                <option value={draft.deliveryType}>
-                                  {DELIVERY_TYPE_LABELS[draft.deliveryType] || draft.deliveryType}（当前·旧）
-                                </option>
-                              ) : null}
-                            </select>
-                          </label>
-                        ) : null}
-
-                        {!o.builtin && !o.legacy && draft.deliveryType === 'http' ? (
-                          <>
+                          <div className="outputs-expand-section">
+                            <h3 className="outputs-expand-section-title">投递与连接</h3>
                             <label className="outputs-expand-label">
-                              请求 URL
-                              <input
-                                className="sessions-search-input"
-                                value={draft.requestUrl}
-                                onChange={(e) => setDraft((d) => ({ ...d, requestUrl: e.target.value }))}
-                                placeholder="https://…"
-                              />
-                            </label>
-                            <label className="outputs-expand-label">
-                              协议
+                              投递类型
                               <select
                                 className="sessions-filter-select outputs-expand-select"
-                                value={draft.httpProtocol}
-                                onChange={(e) => setDraft((d) => ({ ...d, httpProtocol: e.target.value }))}
+                                value={draft.deliveryType}
+                                onChange={(e) => setDraft((d) => ({ ...d, deliveryType: e.target.value }))}
                               >
-                                {Object.entries(HTTP_PROTOCOL_LABELS).map(([k, lab]) => (
-                                  <option key={k} value={k}>
-                                    {lab}
+                                {NEW_OUTPUT_DELIVERY_TYPES.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
                                   </option>
                                 ))}
+                                {['agent_chat', 'command', 'stream'].includes(draft.deliveryType) ? (
+                                  <option value={draft.deliveryType}>
+                                    {DELIVERY_TYPE_LABELS[draft.deliveryType] || draft.deliveryType}（当前·旧）
+                                  </option>
+                                ) : null}
                               </select>
                             </label>
-                          </>
+
+                            {draft.deliveryType === 'http' ? (
+                              <>
+                                <label className="outputs-expand-label">
+                                  请求 URL
+                                  <input
+                                    className="sessions-search-input"
+                                    value={draft.requestUrl}
+                                    onChange={(e) => setDraft((d) => ({ ...d, requestUrl: e.target.value }))}
+                                    placeholder="https://…"
+                                  />
+                                </label>
+                                <label className="outputs-expand-label">
+                                  协议
+                                  <select
+                                    className="sessions-filter-select outputs-expand-select"
+                                    value={draft.httpProtocol}
+                                    onChange={(e) => setDraft((d) => ({ ...d, httpProtocol: e.target.value }))}
+                                  >
+                                    {Object.entries(HTTP_PROTOCOL_LABELS).map(([k, lab]) => (
+                                      <option key={k} value={k}>
+                                        {lab}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              </>
+                            ) : null}
+
+                            {draft.deliveryType === 'xiaoai' ? (
+                              <>
+                                <div className="outputs-expand-label outputs-expand-label--cli-template">
+                                  <CliInstructionHeader
+                                    onExample={() =>
+                                      setDraft((d) => ({
+                                        ...d,
+                                        commandTemplate: DEFAULT_CLI_TEMPLATE,
+                                        angleSlots: buildAllCustomAngleSlots(DEFAULT_CLI_TEMPLATE),
+                                      }))
+                                    }
+                                  />
+                                  <textarea
+                                    className="outputs-expand-textarea outputs-expand-textarea--mono"
+                                    rows={4}
+                                    value={draft.commandTemplate}
+                                    aria-label="完整指令"
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setDraft((d) => ({
+                                        ...d,
+                                        commandTemplate: v,
+                                        angleSlots: mergeAngleSlotsWithDefaults(v, d.angleSlots || []),
+                                      }));
+                                    }}
+                                  />
+                                </div>
+                                <CliAngleSlotsEditor
+                                  slots={mergeAngleSlotsWithDefaults(
+                                    draft.commandTemplate,
+                                    draft.angleSlots || []
+                                  )}
+                                  onChange={(next) => setDraft((d) => ({ ...d, angleSlots: next }))}
+                                />
+                              </>
+                            ) : null}
+
+                            {!['http', 'xiaoai', 'agent_chat', 'command'].includes(draft.deliveryType) ? (
+                              <label className="outputs-expand-label">
+                                扩展（JSON 对象）
+                                <textarea
+                                  className="outputs-expand-textarea outputs-expand-textarea--mono"
+                                  rows={4}
+                                  value={draft.extJson}
+                                  onChange={(e) => setDraft((d) => ({ ...d, extJson: e.target.value }))}
+                                />
+                              </label>
+                            ) : null}
+
+                            {draft.deliveryType === 'command' ? (
+                              <>
+                                <label className="outputs-expand-label">
+                                  CLI 命令模板（旧）
+                                  <textarea
+                                    className="outputs-expand-textarea outputs-expand-textarea--mono"
+                                    rows={3}
+                                    value={draft.cliTemplate}
+                                    onChange={(e) => setDraft((d) => ({ ...d, cliTemplate: e.target.value }))}
+                                  />
+                                </label>
+                                <label className="outputs-expand-label">
+                                  工作区路径
+                                  <input
+                                    className="sessions-search-input"
+                                    value={draft.cliWorkspace}
+                                    onChange={(e) => setDraft((d) => ({ ...d, cliWorkspace: e.target.value }))}
+                                  />
+                                </label>
+                              </>
+                            ) : null}
+                          </div>
                         ) : null}
 
-                        {!o.builtin && !o.legacy && draft.deliveryType === 'xiaoai' ? (
-                          <>
-                            <div className="outputs-expand-label outputs-expand-label--cli-template">
-                              <CliInstructionHeader
-                                onExample={() =>
-                                  setDraft((d) => ({
-                                    ...d,
-                                    commandTemplate: DEFAULT_CLI_TEMPLATE,
-                                    angleSlots: buildAllCustomAngleSlots(DEFAULT_CLI_TEMPLATE),
-                                  }))
-                                }
-                              />
-                              <textarea
-                                className="outputs-expand-textarea outputs-expand-textarea--mono"
-                                rows={4}
-                                value={draft.commandTemplate}
-                                aria-label="完整指令"
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setDraft((d) => ({
-                                    ...d,
-                                    commandTemplate: v,
-                                    angleSlots: mergeAngleSlotsWithDefaults(v, d.angleSlots || []),
-                                  }));
-                                }}
-                              />
-                            </div>
-                            <CliAngleSlotsEditor
-                              slots={mergeAngleSlotsWithDefaults(
-                                draft.commandTemplate,
-                                draft.angleSlots || []
-                              )}
-                              onChange={(next) => setDraft((d) => ({ ...d, angleSlots: next }))}
+                        {!o.legacy ? (
+                          <div className="outputs-expand-env-before-voice">
+                            <h3 className="cli-params-subtitle">环境变量（可选）</h3>
+                            <CliEnvEditor
+                              value={normalizeCliEnvRecord(draft.targetEnv)}
+                              onChange={(next) => setDraft((d) => ({ ...d, targetEnv: next }))}
+                              lead={
+                                draft.deliveryType === 'http' ? (
+                                  <>
+                                    随请求附加 <code className="settings-code">X-Reso-Target-Env</code>；对方需允许该头。
+                                  </>
+                                ) : undefined
+                              }
                             />
-                          </>
+                          </div>
                         ) : null}
 
-                        {!o.builtin &&
-                        !o.legacy &&
-                        !['http', 'xiaoai', 'agent_chat', 'command'].includes(draft.deliveryType) ? (
-                          <label className="outputs-expand-label">
-                            扩展（JSON 对象）
-                            <textarea
-                              className="outputs-expand-textarea outputs-expand-textarea--mono"
-                              rows={4}
-                              value={draft.extJson}
-                              onChange={(e) => setDraft((d) => ({ ...d, extJson: e.target.value }))}
+                        {!o.legacy ? (
+                          <div className="outputs-expand-voice">
+                            <OutputVoiceControlSection
+                              value={draft.voiceControl}
+                              onChange={(next) => setDraft((d) => ({ ...d, voiceControl: next }))}
+                              lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
                             />
-                          </label>
-                        ) : null}
-
-                        {!o.builtin && !o.legacy && draft.deliveryType === 'command' ? (
-                          <>
-                            <label className="outputs-expand-label">
-                              CLI 命令模板（旧）
-                              <textarea
-                                className="outputs-expand-textarea outputs-expand-textarea--mono"
-                                rows={3}
-                                value={draft.cliTemplate}
-                                onChange={(e) => setDraft((d) => ({ ...d, cliTemplate: e.target.value }))}
-                              />
-                            </label>
-                            <label className="outputs-expand-label">
-                              工作区路径
-                              <input
-                                className="sessions-search-input"
-                                value={draft.cliWorkspace}
-                                onChange={(e) => setDraft((d) => ({ ...d, cliWorkspace: e.target.value }))}
-                              />
-                            </label>
-                          </>
+                          </div>
                         ) : null}
 
                         <div className="outputs-expand-actions">
@@ -924,6 +990,27 @@ export default function OutputsPage() {
                   onChange={(e) => setModalDraft((d) => ({ ...d, outputShape: e.target.value }))}
                 />
               </label>
+              <div className="modal-env-before-voice">
+                <h3 className="cli-params-subtitle">环境变量（可选）</h3>
+                <CliEnvEditor
+                  value={normalizeCliEnvRecord(modalDraft.targetEnv)}
+                  onChange={(next) => setModalDraft((d) => ({ ...d, targetEnv: next }))}
+                  lead={
+                    modalDraft.deliveryType === 'http' ? (
+                      <>
+                        随 POST 附加 <code className="settings-code">X-Reso-Target-Env</code>；注意 CORS。
+                      </>
+                    ) : undefined
+                  }
+                />
+              </div>
+              <div className="modal-voice-block">
+                <OutputVoiceControlSection
+                  value={modalDraft.voiceControl}
+                  onChange={(next) => setModalDraft((d) => ({ ...d, voiceControl: next }))}
+                  lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
+                />
+              </div>
               <div className="modal-actions">
                 <button type="button" className="btn-clear" onClick={() => setModalOpen(false)}>
                   取消

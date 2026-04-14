@@ -1,10 +1,12 @@
 import type { Server } from 'http';
 import fs from 'fs';
-import path from 'path';
 import { WebSocketServer } from 'ws';
 import { connectDashScope } from '~/services/asrBridge.ts';
 import { resolveDashscopeApiKey } from '~/services/dashscopeChat.ts';
-import { getCursorOutputRootResolved, readCursorSessionFilesSync } from '~/services/cursorPaths.ts';
+import {
+  ensureCursorSessionOutputDir,
+  readCursorSessionFilesSync,
+} from '~/services/cursorPaths.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 
 function upgradePathname(url: string | undefined): string {
@@ -152,22 +154,30 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
   });
 
   wssCursor.on('connection', (clientWs) => {
-    let watcher: fs.FSWatcher | null = null;
+    let dirWatcher: fs.FSWatcher | null = null;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    /** 上次已推送内容签名，避免重复帧；stop 时清空以便重新 subscribe 会再推一帧 */
+    let lastSentSig = '';
 
     const stopWatch = () => {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
         debounceTimer = null;
       }
-      if (watcher) {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (dirWatcher) {
         try {
-          watcher.close();
+          dirWatcher.close();
         } catch {
           /* ignore */
         }
-        watcher = null;
+        dirWatcher = null;
       }
+      lastSentSig = '';
     };
 
     const safeSend = (obj: unknown) => {
@@ -189,30 +199,45 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
         return;
       }
       stopWatch();
-      const dirAbs = path.join(getCursorOutputRootResolved(), sid);
+      let dirAbs: string;
       try {
-        fs.mkdirSync(dirAbs, { recursive: true });
+        dirAbs = ensureCursorSessionOutputDir(sid);
       } catch (e) {
         safeSend({ type: 'error', message: e instanceof Error ? e.message : 'mkdir failed' });
         return;
       }
 
-      const pushFiles = () => {
-        debounceTimer = null;
+      const pushIfChanged = () => {
         const { info, error } = readCursorSessionFilesSync(dirAbs);
+        const sig = `${info.length}\0${error.length}\0${info}\0${error}`;
+        if (sig === lastSentSig) return;
+        lastSentSig = sig;
         safeSend({ type: 'files', info, error });
       };
 
-      pushFiles();
+      const schedulePush = () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          pushIfChanged();
+        }, 50);
+      };
+
+      pushIfChanged();
 
       try {
-        watcher = fs.watch(dirAbs, { persistent: false }, () => {
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(pushFiles, 120);
+        dirWatcher = fs.watch(dirAbs, { persistent: false }, () => {
+          schedulePush();
         });
       } catch (e) {
         safeSend({ type: 'error', message: e instanceof Error ? e.message : 'watch failed' });
       }
+
+      /**
+       * 目录 fs.watch 在部分环境对「仅追加写入同一文件」不触发或触发不稳定；CLI 重定向 stdout
+       * 时常为块缓冲，轮询可在 flush 间隔内把增长中的内容推到前端。
+       */
+      pollTimer = setInterval(pushIfChanged, 300);
     });
 
     clientWs.on('close', stopWatch);

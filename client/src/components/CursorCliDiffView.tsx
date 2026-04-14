@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { diffLinesToOps } from '../cliOutputFormats/cursorLineDiff.js';
+import { diffLinesToOps } from '../cliOutputFormats/cursorLineDiff';
 
 export default function CursorCliDiffView({
   path,

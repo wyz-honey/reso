@@ -11,6 +11,7 @@ import {
   assertValidSessionId,
   upsertSessionExternalThread,
 } from '~/services/sessionExternalThreadService.ts';
+import { mergeProcessEnvFillMissing } from '~/utils/cliEnvMerge.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -30,12 +31,16 @@ function parseCreateChatId(stdout: string, stderr: string): string {
   );
 }
 
-async function runAgentCreateChat(agentBin: string): Promise<string> {
+async function runAgentCreateChat(
+  agentBin: string,
+  cliEnvFill?: Record<string, string>
+): Promise<string> {
   try {
+    const env = mergeProcessEnvFillMissing(process.env, cliEnvFill || {});
     const { stdout, stderr } = await execFileAsync(agentBin, ['create-chat'], {
       maxBuffer: 4 * 1024 * 1024,
       timeout: 120_000,
-      env: { ...process.env },
+      env,
     });
     if (stderr && String(stderr).trim()) {
       serviceWarn('cursor-agent', 'create-chat stderr', { chunk: String(stderr).slice(0, 500) });
@@ -66,7 +71,8 @@ const ensureLocks = new Map<string, Promise<{ threadId: string; created: boolean
 export async function ensureSessionExternalThreadWithAgentCreateChat(
   db: AppDb,
   sessionId: string,
-  provider: string
+  provider: string,
+  options?: { cliEnv?: Record<string, string> }
 ): Promise<{ threadId: string; created: boolean }> {
   const sid = assertValidSessionId(sessionId);
   const prov = assertValidProvider(provider);
@@ -94,7 +100,7 @@ export async function ensureSessionExternalThreadWithAgentCreateChat(
       }
 
       const bin = (process.env.RESO_CURSOR_AGENT_BIN || 'agent').trim() || 'agent';
-      const chatId = await runAgentCreateChat(bin);
+      const chatId = await runAgentCreateChat(bin, options?.cliEnv);
       await upsertSessionExternalThread(db, sid, prov, chatId);
       return { threadId: chatId, created: true };
     } catch (e) {

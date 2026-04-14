@@ -42,30 +42,17 @@ const KEY = 'reso_voice_settings_v1';
 
 const ASR_LANG_ALLOWED = new Set(['zh', 'en', 'ja', 'yue', 'ko', 'de', 'fr', 'ru']);
 
+/** 仅含与「系统设置」相关的项；识别结束策略在各目标中配置 */
 const DEFAULTS = {
-  endMode: END_MODES.phrase as EndMode,
-  silenceSeconds: 5,
-  endPhrases: ['over', '结束', '完毕'],
-  stripEndPhrase: true,
-  stopMicAfterAuto: true,
   agentModel: '',
   dashscopeApiKey: '',
-  /** 百炼 Paraformer：过滤嗯啊等语气词（服务端） */
   asrDisfluencyRemoval: true,
-  /** 逗号/空格/换行分隔，如 zh；留空则不让服务端带 language_hints（自动语种） */
   asrLanguageHintsText: 'zh',
-  /** 识别结果首尾再削一层口语（仅出现在开头或词长≥2 且出现在结尾时移除，避免误伤句中） */
   oralStripEnabled: false,
   oralStripPhrasesText: '',
 };
 
-export type VoiceSettings = typeof DEFAULTS & { endPhrases: string[]; endMode: EndMode };
-
-function normalizePhrases(list: unknown): string[] {
-  if (!Array.isArray(list)) return [...DEFAULTS.endPhrases];
-  const out = list.map((s) => String(s).trim()).filter(Boolean);
-  return out.length ? out : [...DEFAULTS.endPhrases];
-}
+export type VoiceSettings = typeof DEFAULTS;
 
 function parseAsrLanguageHintsText(raw: unknown): string {
   if (typeof raw !== 'string') return DEFAULTS.asrLanguageHintsText;
@@ -90,7 +77,6 @@ export function getAsrLanguageHintsArray(hintsText: string): string[] {
   return out;
 }
 
-/** 句首可反复削掉的单字语气（在 oralStripEnabled 时额外跑一层） */
 const ORAL_LEAD_SYLLABLES_RE = /^(嗯+|啊+|呃+|额+|欸+|诶+)[，,、\s\u3000]*/u;
 
 function oralStripPhrasesFromText(text: string): string[] {
@@ -101,7 +87,6 @@ function oralStripPhrasesFromText(text: string): string[] {
     .sort((a, b) => b.length - a.length);
 }
 
-/** 仅从首尾剥掉词表中的片段；尾部仅移除长度 ≥2 的词，避免「你好」被削成「你」 */
 function stripOralEdges(text: string, phrases: string[]): string {
   let t = text;
   let guard = 0;
@@ -135,7 +120,6 @@ function stripOralEdges(text: string, phrases: string[]): string {
   return t.trim();
 }
 
-/** 对单句/半句识别结果做口语清理（在写入编辑区前调用） */
 export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
   let t = String(raw ?? '');
   if (!v.oralStripEnabled) return t;
@@ -146,31 +130,9 @@ export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
-function normalizeState(partial: Partial<VoiceSettings>): VoiceSettings {
+function normalizeState(partial: Partial<VoiceSettings> & Record<string, unknown>): VoiceSettings {
   const o = partial;
-  const silenceSeconds = Math.max(
-    1,
-    Math.min(60, Number(o.silenceSeconds ?? DEFAULTS.silenceSeconds) || DEFAULTS.silenceSeconds)
-  );
-  const validModes = new Set(Object.values(END_MODES));
-  let endMode: EndMode = validModes.has(o.endMode as EndMode)
-    ? (o.endMode as EndMode)
-    : DEFAULTS.endMode;
-  if (o.endMode != null && !validModes.has(o.endMode as EndMode) && typeof o.endMode === 'string') {
-    const lower = o.endMode.toLowerCase();
-    if (lower === 'phrase' || lower === '结束词') endMode = END_MODES.phrase;
-    else if (lower === 'silence' || lower === '静音') endMode = END_MODES.silence;
-    else if (lower === 'both') endMode = END_MODES.both;
-    else if (lower === 'manual' || lower === '手动') endMode = END_MODES.manual;
-  }
   return {
-    ...DEFAULTS,
-    ...o,
-    endMode,
-    silenceSeconds,
-    endPhrases: normalizePhrases(o.endPhrases),
-    stripEndPhrase: o.stripEndPhrase !== false,
-    stopMicAfterAuto: o.stopMicAfterAuto !== false,
     agentModel: typeof o.agentModel === 'string' ? o.agentModel.trim() : '',
     dashscopeApiKey: typeof o.dashscopeApiKey === 'string' ? o.dashscopeApiKey.trim() : '',
     asrDisfluencyRemoval: o.asrDisfluencyRemoval !== false,
@@ -178,14 +140,6 @@ function normalizeState(partial: Partial<VoiceSettings>): VoiceSettings {
     oralStripEnabled: o.oralStripEnabled === true,
     oralStripPhrasesText: parseOralStripPhrasesText(o.oralStripPhrasesText),
   };
-}
-
-function joinPhrasesForHint(phrases: string[], max = 4): string {
-  const p = (phrases || []).map((s) => String(s).trim()).filter(Boolean);
-  if (!p.length) return 'over、结束';
-  const head = p.slice(0, max);
-  const tail = p.length > max ? '…' : '';
-  return `${head.join('、')}${tail}`;
 }
 
 type VoiceStore = VoiceSettings & {
@@ -198,49 +152,19 @@ export const useVoiceSettingsStore = create<VoiceStore>()(
       ...normalizeState({}),
       saveVoiceSettings: (patch) => {
         const cur = get();
-        const next = normalizeState({
-          ...cur,
-          ...patch,
-          endPhrases: patch.endPhrases != null ? normalizePhrases(patch.endPhrases) : cur.endPhrases,
-          silenceSeconds:
-            patch.silenceSeconds != null
-              ? Math.max(1, Math.min(60, Number(patch.silenceSeconds) || cur.silenceSeconds))
-              : cur.silenceSeconds,
-          agentModel:
-            patch.agentModel != null ? String(patch.agentModel).trim() : cur.agentModel,
-          dashscopeApiKey:
-            patch.dashscopeApiKey != null
-              ? String(patch.dashscopeApiKey).trim()
-              : cur.dashscopeApiKey,
-          asrDisfluencyRemoval:
-            patch.asrDisfluencyRemoval != null ? patch.asrDisfluencyRemoval !== false : cur.asrDisfluencyRemoval,
-          asrLanguageHintsText:
-            patch.asrLanguageHintsText != null
-              ? parseAsrLanguageHintsText(patch.asrLanguageHintsText)
-              : cur.asrLanguageHintsText,
-          oralStripEnabled: patch.oralStripEnabled != null ? patch.oralStripEnabled === true : cur.oralStripEnabled,
-          oralStripPhrasesText:
-            patch.oralStripPhrasesText != null
-              ? parseOralStripPhrasesText(patch.oralStripPhrasesText)
-              : cur.oralStripPhrasesText,
-        });
+        const next = normalizeState({ ...cur, ...patch });
         set(next);
         try {
           window.dispatchEvent(new CustomEvent('reso-settings-changed'));
         } catch {
           /* ignore */
         }
-        return next;
+        return getVoiceSettings();
       },
     }),
     {
       name: KEY,
       partialize: (s) => ({
-        endMode: s.endMode,
-        silenceSeconds: s.silenceSeconds,
-        endPhrases: s.endPhrases,
-        stripEndPhrase: s.stripEndPhrase,
-        stopMicAfterAuto: s.stopMicAfterAuto,
         agentModel: s.agentModel,
         dashscopeApiKey: s.dashscopeApiKey,
         asrDisfluencyRemoval: s.asrDisfluencyRemoval,
@@ -262,26 +186,6 @@ export function getVoiceSettings(): VoiceSettings {
 
 export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {
   return useVoiceSettingsStore.getState().saveVoiceSettings(patch);
-}
-
-export function getVoiceControlSummary(isAgentMode: boolean): string {
-  if (isAgentMode) {
-    return `约 ${AGENT_VOICE_SILENCE_SEC} 秒无新识别后自动发送，保持聆听`;
-  }
-  const v = getVoiceSettings();
-  if (v.endMode === END_MODES.manual) {
-    return '仅手动点发送，不自动';
-  }
-  if (v.endMode === END_MODES.silence) {
-    return `静音约 ${v.silenceSeconds} 秒后自动发送`;
-  }
-  if (v.endMode === END_MODES.phrase) {
-    return `说 ${joinPhrasesForHint(v.endPhrases)} 等结束后自动发送`;
-  }
-  if (v.endMode === END_MODES.both) {
-    return `说 ${joinPhrasesForHint(v.endPhrases)} 或静音 ${v.silenceSeconds}s 后自动发送`;
-  }
-  return '结束策略见设置';
 }
 
 export function stripTrailingPunctuation(text: string): string {

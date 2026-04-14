@@ -4,11 +4,17 @@ import { useId } from 'react';
 export const CLI_ANGLE_HELP_TEXT =
   '使用尖括号 <> 包裹占位标签，例如 <输入>。确认时按下方每项配置替换为实际内容。亦可使用双花括号变量，如 {{paragraph}}、{{sessionId}}、{{workspace}}。';
 
-export default function CliInstructionHeader({ onExample }) {
+export default function CliInstructionHeader({
+  onExample,
+  title = '完整指令',
+}: {
+  onExample: () => void;
+  title?: string;
+}) {
   const tipId = useId();
   return (
     <div className="cli-instruction-header">
-      <span className="cli-instruction-header-title">完整指令</span>
+      <span className="cli-instruction-header-title">{title}</span>
       <span className="cli-instruction-header-tools">
         <span className="cli-help-bubble-wrap">
           <button

@@ -1,5 +1,14 @@
 /** 配置 CLI 模板中每个 &lt;标签&gt; 的系统（多选一）或自定义字面量 */
-import { ANGLE_SYSTEM_FIELDS } from '../cliSubstitute.js';
+import {
+  ANGLE_SYSTEM_FIELDS,
+  shouldDefaultCustomSource,
+  type AngleSlot,
+} from '../cliSubstitute';
+import {
+  CURSOR_AGENT_MODEL_PRESETS,
+  CURSOR_AGENT_MODEL_SELECT_OTHER,
+  cursorAgentModelSelectValue,
+} from '../cursorAgentModels';
 
 const SYSTEM_FIELD_OPTIONS = [
   { value: 'paragraph', label: '识别段落', hint: 'system.paragraph' },
@@ -22,8 +31,27 @@ const SYSTEM_FIELD_OPTIONS = [
   },
 ];
 
-export default function CliAngleSlotsEditor({ slots, onChange }) {
+export default function CliAngleSlotsEditor({
+  slots,
+  onChange,
+  sectionTitle = '尖括号占位',
+  sectionHint,
+  useCursorAgentModelPicker = false,
+}: {
+  slots: AngleSlot[];
+  onChange: (next: AngleSlot[]) => void;
+  sectionTitle?: string;
+  sectionHint?: string;
+  /** Cursor 目标：&lt;模型&gt; 用固定 id 下拉（与 `agent --model` 一致），仍可选「其他」手写 */
+  useCursorAgentModelPicker?: boolean;
+}) {
   if (!slots?.length) return null;
+
+  const hintText =
+    sectionHint ??
+    (useCursorAgentModelPicker
+      ? '「系统」从运行时上下文取值。Cursor 的 &lt;模型&gt; 请从下拉选 CLI 模型 id，或与 `agent models` 不一致时选「其他」手写。'
+      : '「系统」从运行时上下文取值（段落 / 绑定会话 / CLI 工作区）；模型名等请选「自定义」并填写字面量。');
 
   const patch = (index, partial) => {
     const next = slots.map((s, i) => (i === index ? { ...s, ...partial } : s));
@@ -32,10 +60,8 @@ export default function CliAngleSlotsEditor({ slots, onChange }) {
 
   return (
     <div className="cli-angle-slots-editor">
-      <div className="cli-angle-slots-editor-title">尖括号占位</div>
-      <p className="cli-angle-slots-editor-hint">
-        「系统」从运行时上下文取值（段落 / 绑定会话 / CLI 工作区）；模型名等请选「自定义」并填写字面量。
-      </p>
+      <div className="cli-angle-slots-editor-title">{sectionTitle}</div>
+      <p className="cli-angle-slots-editor-hint">{hintText}</p>
       <ul className="cli-angle-slots-list">
         {slots.map((slot, i) => (
           <li key={slot.key || `${slot.label}-${i}`} className="cli-angle-slot-item">
@@ -52,7 +78,7 @@ export default function CliAngleSlotsEditor({ slots, onChange }) {
                     if (e.target.value === 'custom') {
                       patch(i, { source: 'custom', systemField: 'paragraph' });
                     } else {
-                      const field = ANGLE_SYSTEM_FIELDS.includes(slot.systemField)
+                      const field = (ANGLE_SYSTEM_FIELDS as readonly string[]).includes(slot.systemField)
                         ? slot.systemField
                         : 'paragraph';
                       patch(i, { source: 'system', systemField: field });
@@ -70,7 +96,11 @@ export default function CliAngleSlotsEditor({ slots, onChange }) {
                   <span className="cli-angle-slot-field-label">系统字段</span>
                   <select
                     className="cli-angle-slot-select"
-                    value={ANGLE_SYSTEM_FIELDS.includes(slot.systemField) ? slot.systemField : 'paragraph'}
+                    value={
+                      (ANGLE_SYSTEM_FIELDS as readonly string[]).includes(slot.systemField)
+                        ? slot.systemField
+                        : 'paragraph'
+                    }
                     onChange={(e) => {
                       const v = e.target.value;
                       if ((ANGLE_SYSTEM_FIELDS as readonly string[]).includes(v)) {
@@ -87,6 +117,48 @@ export default function CliAngleSlotsEditor({ slots, onChange }) {
                   <p className="cli-angle-slot-system-note cli-angle-slot-system-note--compact">
                     确认指令时替换为实际值（段落会按 shell 单引号转义）。
                   </p>
+                </label>
+              ) : useCursorAgentModelPicker && shouldDefaultCustomSource(slot.label) ? (
+                <label className="cli-angle-slot-value-field">
+                  <span className="cli-angle-slot-field-label">模型 id（--model）</span>
+                  <select
+                    className="cli-angle-slot-select"
+                    value={cursorAgentModelSelectValue(slot.customValue)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === CURSOR_AGENT_MODEL_SELECT_OTHER) {
+                        patch(i, {
+                          customValue:
+                            slot.customValue &&
+                            cursorAgentModelSelectValue(slot.customValue) ===
+                              CURSOR_AGENT_MODEL_SELECT_OTHER
+                              ? slot.customValue
+                              : '',
+                        });
+                      } else {
+                        patch(i, { customValue: v });
+                      }
+                    }}
+                  >
+                    <option value="">请选择…</option>
+                    {CURSOR_AGENT_MODEL_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}（{p.id}）
+                      </option>
+                    ))}
+                    <option value={CURSOR_AGENT_MODEL_SELECT_OTHER}>其他（手动输入 id）</option>
+                  </select>
+                  {cursorAgentModelSelectValue(slot.customValue) ===
+                  CURSOR_AGENT_MODEL_SELECT_OTHER ? (
+                    <input
+                      type="text"
+                      className="cli-angle-slot-input cli-angle-slot-input--mt"
+                      value={slot.customValue || ''}
+                      onChange={(e) => patch(i, { customValue: e.target.value })}
+                      placeholder="与 `agent models` 中 id 一致"
+                      spellCheck={false}
+                    />
+                  ) : null}
                 </label>
               ) : (
                 <label className="cli-angle-slot-value-field">

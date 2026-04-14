@@ -94,6 +94,11 @@ function labelSuggestsParagraphSlot(label: unknown): boolean {
   return /输入|段落|正文|paragraph|content/i.test(String(label || '').trim());
 }
 
+/** 与模式上的「工作区路径」cliWorkspace 对齐，避免默认识别成空的「自定义」槽 */
+function labelSuggestsWorkspaceSlot(label: unknown): boolean {
+  return /工作空间|工作区|workspace|repo/i.test(String(label || '').trim());
+}
+
 export function shouldDefaultCustomSource(label: unknown): boolean {
   return /模型|model/i.test(String(label || '').trim());
 }
@@ -184,6 +189,15 @@ export function mergeAngleSlotsWithDefaults(
         label,
         source: 'system',
         systemField: 'externalThread',
+        customValue: '',
+      };
+    }
+    if (labelSuggestsWorkspaceSlot(label)) {
+      return {
+        key: randomSlotKey(),
+        label,
+        source: 'system',
+        systemField: 'workspace',
         customValue: '',
       };
     }

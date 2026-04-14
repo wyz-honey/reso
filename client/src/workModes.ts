@@ -1,15 +1,18 @@
-import { mergeAngleSlotsWithDefaults } from './cliSubstitute.js';
+import { mergeTargetEnvLayers, normalizeCliEnvRecord } from './cliEnv';
+import { mergeAngleSlotsWithDefaults } from './cliSubstitute';
 import {
   addCustomOutput,
   CURSOR_CLI_DEFAULT_TEMPLATE,
-  CURSOR_EXTERNAL_THREAD_PROVIDER,
   getCustomOutputs,
   listAllOutputs,
   newOutputId,
   removeCustomOutput,
+  saveBuiltinOutputOverride,
   updateCustomOutput,
-} from './outputCatalog.js';
-import { useOutputRevisionStore } from './stores/outputRevisionStore.js';
+} from './outputCatalog';
+import { parseOutputVoiceControl } from './outputVoiceControl';
+import { getResolvedExternalThreadProvider } from './resolvedExternalThread';
+import { useOutputRevisionStore } from './stores/outputRevisionStore';
 
 const STORAGE_CUSTOM = 'reso_work_modes_custom_v1';
 const STORAGE_ACTIVE = 'reso_active_mode_id_v1';
@@ -77,9 +80,18 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
       ? o.extensions
       : {}
   ) as Record<string, unknown>;
+  const targetEnv = mergeTargetEnvLayers(ext.cliEnv, ext.environment, o.environment);
+  const voiceControl = parseOutputVoiceControl(ext.voiceControl, String(o.deliveryType || ''));
   switch (o.deliveryType) {
     case 'paragraph_clipboard':
-      return { id: o.id, name: o.name, kind: 'asr', builtIn: !!o.builtin, systemPrompt: '' };
+      return {
+        id: o.id,
+        name: o.name,
+        kind: 'asr',
+        builtIn: !!o.builtin,
+        systemPrompt: '',
+        voiceControl,
+      };
     case 'agent_chat': {
       if (o.builtin && o.id === 'builtin-agent') {
         return {
@@ -88,13 +100,23 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
           kind: 'agent',
           builtIn: true,
           systemPrompt: getBuiltinAgentDefaultPrompt(),
+          cliEnv: targetEnv,
+          voiceControl,
         };
       }
       const systemPrompt =
         typeof ext.systemPrompt === 'string' && ext.systemPrompt.trim()
           ? ext.systemPrompt.trim()
           : getBuiltinAgentDefaultPrompt();
-      return { id: o.id, name: o.name, kind: 'agent', builtIn: !!o.builtin, systemPrompt };
+      return {
+        id: o.id,
+        name: o.name,
+        kind: 'agent',
+        builtIn: !!o.builtin,
+        systemPrompt,
+        cliEnv: targetEnv,
+        voiceControl,
+      };
     }
     case 'http': {
       const proto = ext.httpProtocol === 'agui' ? 'agui' : 'openai_chat';
@@ -110,6 +132,8 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         systemPrompt: '',
         requestUrl: url,
         httpProtocol: proto,
+        cliEnv: targetEnv,
+        voiceControl,
       };
     }
     case 'xiaoai': {
@@ -128,6 +152,8 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         cliWorkspace: typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '',
         angleSlots,
         cliVariant: 'xiaoai',
+        cliEnv: targetEnv,
+        voiceControl,
       };
     }
     case 'command': {
@@ -144,6 +170,8 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         cliTemplate,
         cliWorkspace: typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '',
         cliVariant: 'command',
+        cliEnv: targetEnv,
+        voiceControl,
       };
     }
     case 'cursor_cli': {
@@ -152,10 +180,6 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
           ? ext.commandTemplate.trim()
           : CURSOR_CLI_DEFAULT_TEMPLATE;
       const angleSlots = Array.isArray(ext.angleSlots) ? ext.angleSlots : [];
-      const etp =
-        typeof ext.externalThreadProvider === 'string' && ext.externalThreadProvider.trim()
-          ? ext.externalThreadProvider.trim()
-          : CURSOR_EXTERNAL_THREAD_PROVIDER;
       return {
         id: o.id,
         name: o.name,
@@ -163,22 +187,38 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         builtIn: !!o.builtin,
         systemPrompt: '',
         cliTemplate: tmpl,
-        cliWorkspace: '',
+        cliWorkspace: typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '',
         angleSlots: mergeAngleSlotsWithDefaults(tmpl, angleSlots),
         cliVariant: 'cursor',
-        externalThreadProvider: etp,
+        externalThreadProvider: getResolvedExternalThreadProvider(),
+        cliEnv: targetEnv,
+        voiceControl,
       };
     }
     case 'stream':
     default:
-      return { id: o.id, name: o.name, kind: 'asr', builtIn: !!o.builtin, systemPrompt: '' };
+      return {
+        id: o.id,
+        name: o.name,
+        kind: 'asr',
+        builtIn: !!o.builtin,
+        systemPrompt: '',
+        voiceControl,
+      };
   }
 }
 
 export function getAllModes() {
   const fromCatalog = listAllOutputs().map(mapOutputRowToMode);
   const ids = new Set(fromCatalog.map((m) => String(m.id)));
-  const legacy = readCustomModes().filter((m) => !ids.has(String(m.id)));
+  const legacyRaw = readCustomModes().filter((m) => !ids.has(String(m.id)));
+  const legacy = legacyRaw.map((m) => ({
+    ...(m as Record<string, unknown>),
+    voiceControl:
+      m.kind === 'agent'
+        ? parseOutputVoiceControl(undefined, 'agent_chat')
+        : parseOutputVoiceControl(undefined, 'command'),
+  })) as (typeof fromCatalog)[number][];
   return [...fromCatalog, ...legacy];
 }
 
@@ -298,7 +338,7 @@ export function addCustomCliMode({
 
 export function updateHttpModeFields(
   modeId: string,
-  patch: { requestUrl?: string; httpProtocol?: string }
+  patch: { requestUrl?: string; httpProtocol?: string; cliEnv?: Record<string, string> }
 ) {
   const row = getCustomOutputs().find((x) => (x as { id: string }).id === modeId) as
     | Record<string, unknown>
@@ -317,14 +357,89 @@ export function updateHttpModeFields(
   if (patch.httpProtocol !== undefined) {
     ext.httpProtocol = patch.httpProtocol === 'agui' ? 'agui' : 'openai_chat';
   }
-  updateCustomOutput(modeId, { requestUrl, extensions: ext });
+  let environment: Record<string, string> | undefined;
+  if (patch.cliEnv !== undefined) {
+    const n = normalizeCliEnvRecord(patch.cliEnv);
+    ext.environment = n;
+    ext.cliEnv = n;
+    environment = n;
+  }
+  updateCustomOutput(modeId, { requestUrl, extensions: ext, ...(environment !== undefined ? { environment } : {}) });
+  return getAllModes();
+}
+
+/** RESO / 自定义 agent_chat 目标的环境变量 */
+export function updateAgentModeFields(
+  modeId: string,
+  patch: { cliEnv?: Record<string, string> }
+) {
+  const row = listAllOutputs().find((x) => String((x as { id: string }).id) === String(modeId)) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row || row.deliveryType !== 'agent_chat') return getAllModes();
+  const prevExt =
+    row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
+      ? { ...(row.extensions as object) }
+      : {};
+  const ext = { ...prevExt } as Record<string, unknown>;
+  let envPatch: Record<string, string> | undefined;
+  if (patch.cliEnv !== undefined) {
+    const n = normalizeCliEnvRecord(patch.cliEnv);
+    ext.environment = n;
+    ext.cliEnv = n;
+    envPatch = n;
+  }
+  if (row.builtin) {
+    saveBuiltinOutputOverride(modeId, {
+      extensions: ext,
+      ...(envPatch !== undefined ? { environment: envPatch } : {}),
+    });
+  } else {
+    updateCustomOutput(modeId, {
+      extensions: ext,
+      ...(envPatch !== undefined ? { environment: envPatch } : {}),
+    });
+  }
   return getAllModes();
 }
 
 export function updateCliModeFields(
   modeId: string,
-  patch: { cliTemplate?: string; cliWorkspace?: string; angleSlots?: unknown }
+  patch: { cliTemplate?: string; cliWorkspace?: string; angleSlots?: unknown; cliEnv?: Record<string, string> }
 ) {
+  const row = listAllOutputs().find((x) => String((x as { id: string }).id) === String(modeId)) as
+    | Record<string, unknown>
+    | undefined;
+  if (row?.deliveryType === 'cursor_cli') {
+    const prevExt =
+      row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
+        ? { ...(row.extensions as object) }
+        : {};
+    const ext = { ...prevExt } as Record<string, unknown>;
+    if (patch.cliWorkspace !== undefined) ext.cliWorkspace = String(patch.cliWorkspace);
+    if (patch.cliTemplate !== undefined) ext.commandTemplate = String(patch.cliTemplate);
+    if (patch.angleSlots !== undefined) ext.angleSlots = patch.angleSlots;
+    let envPatch: Record<string, string> | undefined;
+    if (patch.cliEnv !== undefined) {
+      const n = normalizeCliEnvRecord(patch.cliEnv);
+      ext.environment = n;
+      ext.cliEnv = n;
+      envPatch = n;
+    }
+    if (row.builtin) {
+      saveBuiltinOutputOverride(modeId, {
+        extensions: ext,
+        ...(envPatch !== undefined ? { environment: envPatch } : {}),
+      });
+    } else {
+      updateCustomOutput(modeId, {
+        extensions: ext,
+        ...(envPatch !== undefined ? { environment: envPatch } : {}),
+      });
+    }
+    return getAllModes();
+  }
+
   const customOut = getCustomOutputs().find((x) => (x as { id: string }).id === modeId) as
     | Record<string, unknown>
     | undefined;
@@ -337,7 +452,17 @@ export function updateCliModeFields(
     if (patch.cliTemplate !== undefined) ext.commandTemplate = patch.cliTemplate;
     if (patch.cliWorkspace !== undefined) ext.cliWorkspace = patch.cliWorkspace;
     if (patch.angleSlots !== undefined) ext.angleSlots = patch.angleSlots;
-    updateCustomOutput(modeId, { extensions: ext });
+    let envPatchX: Record<string, string> | undefined;
+    if (patch.cliEnv !== undefined) {
+      const n = normalizeCliEnvRecord(patch.cliEnv);
+      ext.environment = n;
+      ext.cliEnv = n;
+      envPatchX = n;
+    }
+    updateCustomOutput(modeId, {
+      extensions: ext,
+      ...(envPatchX !== undefined ? { environment: envPatchX } : {}),
+    });
     return getAllModes();
   }
   if (customOut && customOut.deliveryType === 'command') {
@@ -348,7 +473,17 @@ export function updateCliModeFields(
     } as Record<string, unknown>;
     if (patch.cliTemplate !== undefined) ext.cliTemplate = patch.cliTemplate;
     if (patch.cliWorkspace !== undefined) ext.cliWorkspace = patch.cliWorkspace;
-    updateCustomOutput(modeId, { extensions: ext });
+    let envPatchC: Record<string, string> | undefined;
+    if (patch.cliEnv !== undefined) {
+      const n = normalizeCliEnvRecord(patch.cliEnv);
+      ext.environment = n;
+      ext.cliEnv = n;
+      envPatchC = n;
+    }
+    updateCustomOutput(modeId, {
+      extensions: ext,
+      ...(envPatchC !== undefined ? { environment: envPatchC } : {}),
+    });
     return getAllModes();
   }
 

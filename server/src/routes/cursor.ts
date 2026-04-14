@@ -1,6 +1,9 @@
 import path from 'path';
 import { Router } from 'express';
-import { getCursorOutputRootResolved } from '~/services/cursorPaths.ts';
+import {
+  ensureCursorSessionOutputDir,
+  getCursorOutputRootResolved,
+} from '~/services/cursorPaths.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 
 export function createCursorRouter(): Router {
@@ -13,7 +16,14 @@ export function createCursorRouter(): Router {
     }
     const sid = sessionId.trim();
     const root = getCursorOutputRootResolved();
-    const dirAbs = path.join(root, sid);
+    let dirAbs: string;
+    try {
+      dirAbs = ensureCursorSessionOutputDir(sid);
+    } catch (e) {
+      return res.status(500).json({
+        error: e instanceof Error ? e.message : 'Failed to create cursor output directory',
+      });
+    }
     return res.json({
       rootAbs: root,
       dirAbs,

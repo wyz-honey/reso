@@ -5,7 +5,7 @@ import {
   apiDeleteSession,
   fetchSessionDetail,
   fetchSessionList,
-} from '../api.js';
+} from '../api';
 import '../App.css';
 
 function formatTime(iso) {

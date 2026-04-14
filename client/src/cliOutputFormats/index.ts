@@ -1,10 +1,10 @@
-import { looksLikeCursorStreamJson, parseCursorStreamJson } from './cursorStreamJson.js';
-import { parsePlainCliStdout } from './plain.js';
-import type { ParsedCliOutput } from './types.js';
+import { looksLikeCursorStreamJson, parseCursorStreamJson } from './cursorStreamJson';
+import { parsePlainCliStdout } from './plain';
+import type { ParsedCliOutput } from './types';
 
-export type { CliOutputFormatId, CliParsedBlock, CursorStreamBlock, ParsedCliOutput } from './types.js';
-export { looksLikeCursorStreamJson, parseCursorStreamJson } from './cursorStreamJson.js';
-export { parsePlainCliStdout } from './plain.js';
+export type { CliOutputFormatId, CliParsedBlock, CursorStreamBlock, ParsedCliOutput } from './types';
+export { looksLikeCursorStreamJson, parseCursorStreamJson } from './cursorStreamJson';
+export { parsePlainCliStdout } from './plain';
 
 /**
  * 按输出目标类型选择解析策略。后续可为 xiaoai / 其他 CLI 增加分支或模板字段。

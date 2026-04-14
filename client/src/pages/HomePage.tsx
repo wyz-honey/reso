@@ -4,40 +4,54 @@ import {
   apiAgentChatTurnStream,
   apiCreateSession,
   apiDeleteChatMessages,
-  apiDeleteChatThread,
+  apiDeleteSession,
   apiEnsureSessionExternalThread,
   apiSaveParagraph,
   fetchChatThread,
   fetchCursorSessionPaths,
   fetchQuickInputs,
+  fetchServerMeta,
   fetchSessionList,
-} from '../api.js';
-import AssistantMarkdown from '../components/AssistantMarkdown.js';
-import { getThreadId, removeThreadId, setThreadId } from '../chatThreadStorage.js';
+} from '../api';
+import CliEnvEditor from '../components/CliEnvEditor';
+import { cliEnvForApi, normalizeCliEnvRecord } from '../cliEnv';
+import AssistantMarkdown from '../components/AssistantMarkdown';
+import {
+  getAgentThreadIdForSession,
+  removeAgentThreadIdForSession,
+  removeAllAgentThreadIdsForMode,
+  removeThreadId,
+  setAgentThreadIdForSession,
+} from '../chatThreadStorage';
 import {
   getResolvedResoChatApiKey,
   getResolvedResoChatApiModelId,
   getResolvedSpeechApiKey,
   getResolvedSpeechAsrApiModelId,
-} from '../stores/modelProvidersStore.js';
+} from '../stores/modelProvidersStore';
 import {
   AGENT_VOICE_SILENCE_SEC,
+  END_MODES,
   getAsrLanguageHintsArray,
-  getVoiceControlSummary,
   getVoiceSettings,
   matchesEndPhrase,
   normalizeTranscriptText,
   stripMatchedPhrase,
-} from '../stores/voiceSettingsStore.js';
-import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor.js';
-import CliInstructionHeader from '../components/CliInstructionHeader.js';
+} from '../stores/voiceSettingsStore';
+import {
+  OUTPUT_VOICE_DEFAULTS,
+  formatOutputVoiceControlHint,
+} from '../outputVoiceControl';
+import VoiceWaveVisualizer from '../components/VoiceWaveVisualizer';
+import CliAngleSlotsEditor from '../components/CliAngleSlotsEditor';
+import CliInstructionHeader from '../components/CliInstructionHeader';
 import {
   appendCursorAutoResume,
   buildAllCustomAngleSlots,
   buildAngleCliCommand,
   buildCliCommand,
   mergeAngleSlotsWithDefaults,
-} from '../cliSubstitute.js';
+} from '../cliSubstitute';
 import {
   addCustomHttpMode,
   addCustomXiaoaiMode,
@@ -48,28 +62,39 @@ import {
   saveActiveModeId,
   updateCliModeFields,
   updateHttpModeFields,
-} from '../workModes.js';
+} from '../workModes';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
   CURSOR_EXTERNAL_THREAD_PROVIDER,
   saveBuiltinOutputOverride,
   updateCustomOutput,
-} from '../outputCatalog.js';
+} from '../outputCatalog';
+import {
+  getResolvedExternalThreadProvider,
+  setResolvedExternalThreadProviderFromServer,
+} from '../resolvedExternalThread';
 import {
   cursorCliFillHint,
   cursorCliReady,
+  cursorCliReadyIgnoringProvisioningDeps,
   cursorTriadCustomValues,
   cursorTriadLabelsInTemplate,
+  deriveCursorCliWorkspace,
   getMergedCursorSlots,
-} from '../cursorTriad.js';
-import CursorCliStructuredView from '../components/CursorCliStructuredView.js';
+} from '../cursorTriad';
+import {
+  CURSOR_AGENT_MODEL_PRESETS,
+  CURSOR_AGENT_MODEL_SELECT_OTHER,
+  cursorAgentModelSelectValue,
+} from '../cursorAgentModels';
+import CursorCliStructuredView from '../components/CursorCliStructuredView';
 import {
   looksLikeCursorStreamJson,
   parseCliOutputForDelivery,
-} from '../cliOutputFormats/index.js';
+} from '../cliOutputFormats/index';
 import '../App.css';
-import WorkModeSelect from '../components/WorkModeSelect.js';
-import pcmWorkletUrl from '../audio/pcmCaptureProcessor.js?url';
+import WorkModeSelect from '../components/WorkModeSelect';
+import pcmWorkletUrl from '../audio/pcmCaptureProcessor.ts?url';
 
 /**
  * 语音识别 WS：浏览器只连本机 Node；Node 再连百炼（见 server/index.js）。
@@ -112,6 +137,15 @@ function cursorTailWsUrl() {
 
 const SESSION_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Agent 消息列表在 chatByModeId 中的键（按模式 + 数据库会话） */
+function agentChatStateKey(modeId, sessionId) {
+  const sid =
+    sessionId != null && SESSION_UUID_RE.test(String(sessionId).trim())
+      ? String(sessionId).trim()
+      : '';
+  return `${modeId}::${sid || '_none_'}`;
+}
 
 function formatWorkbenchSessionLabel(s) {
   const title = (s.list_title || s.preview || '').trim();
@@ -228,11 +262,14 @@ function computeWorkbenchCliCommand(
   paragraphText,
   sessionId,
   cursorFilePaths,
-  externalThreadId = ''
+  externalThreadId = '',
+  workspaceFallback = ''
 ) {
   if (!mode || mode.kind !== 'cli') return { error: '非 CLI 模式' };
   const text = String(paragraphText ?? '');
   const sid = sessionId == null || sessionId === '' ? '' : String(sessionId);
+  const ws =
+    String(mode.cliWorkspace || '').trim() || String(workspaceFallback || '').trim();
   const tmpl =
     mode.cliVariant === 'cursor'
       ? mode.cliTemplate || CURSOR_CLI_DEFAULT_TEMPLATE
@@ -243,7 +280,7 @@ function computeWorkbenchCliCommand(
     const ctx = {
       paragraph: text,
       sessionId: sid,
-      workspace: String(mode.cliWorkspace || '').trim(),
+      workspace: ws,
       cursorStdoutAbsPath: cursorFilePaths?.infoTxtAbs || '',
       cursorStderrAbsPath: cursorFilePaths?.errorTxtAbs || '',
       externalThreadId: String(externalThreadId ?? '').trim(),
@@ -259,14 +296,14 @@ function computeWorkbenchCliCommand(
     const cmd = buildAngleCliCommand(tmpl, mode.angleSlots || [], {
       paragraph: text,
       sessionId: sid,
-      workspace: mode.cliWorkspace || '',
+      workspace: ws,
     });
     return { cmd };
   }
   const cmd = buildCliCommand(tmpl, {
     paragraph: text,
     sessionId: sid,
-    workspace: mode.cliWorkspace || '',
+    workspace: ws,
   });
   return { cmd };
 }
@@ -284,7 +321,9 @@ export default function HomePage() {
   const [partialText, setPartialText] = useState('');
   const [copyBusy, setCopyBusy] = useState(false);
   const [chatByModeId, setChatByModeId] = useState({});
-  const [agentSending, setAgentSending] = useState(false);
+  /** 按「模式 + 数据库会话」隔离在途请求，新建/切换会话不阻塞其它会话的 Agent 流式请求 */
+  const [agentSendingByKey, setAgentSendingByKey] = useState({});
+  const [httpSendingByKey, setHttpSendingByKey] = useState({});
   const [modeModalOpen, setModeModalOpen] = useState(false);
   const [cliParamsModalOpen, setCliParamsModalOpen] = useState(false);
   const [newModeName, setNewModeName] = useState('');
@@ -294,13 +333,13 @@ export default function HomePage() {
   const [newXiaoaiTemplate, setNewXiaoaiTemplate] = useState('');
   /** 非 null 时：添加 CLI 输出时用该槽位种子（如「示例」全自定义） */
   const [newCliAngleSlotsPreset, setNewCliAngleSlotsPreset] = useState(null);
-  const [httpSending, setHttpSending] = useState(false);
   const [asrSessionId, setAsrSessionId] = useState(null);
-  const [voiceControlHint, setVoiceControlHint] = useState(() => getVoiceControlSummary(false));
   const [quickInputs, setQuickInputs] = useState([]);
   const [workspacePickSessions, setWorkspacePickSessions] = useState([]);
   const [workspacePickLoading, setWorkspacePickLoading] = useState(false);
   const [workspacePickErr, setWorkspacePickErr] = useState('');
+  /** 未配置工作区时：用服务端 /api/meta 的 cwd（进程启动目录） */
+  const [serverWorkspaceFallback, setServerWorkspaceFallback] = useState(undefined);
   const [cursorSessionFilePaths, setCursorSessionFilePaths] = useState(null);
   const [cursorTailInfo, setCursorTailInfo] = useState('');
   const [cursorTailError, setCursorTailError] = useState('');
@@ -309,6 +348,14 @@ export default function HomePage() {
   const [cursorEnsureStatus, setCursorEnsureStatus] = useState('idle');
   const [cursorEnsureErrorMsg, setCursorEnsureErrorMsg] = useState('');
   const [cursorEnsureRetryNonce, setCursorEnsureRetryNonce] = useState(0);
+  const [cursorStreamLoading, setCursorStreamLoading] = useState(false);
+  /** Cursor 发送：剪贴板写入完成前为 true，侧栏加载条显示「准备中」而非「等输出」 */
+  const [cursorAwaitingCliPaste, setCursorAwaitingCliPaste] = useState(false);
+  /** 发送流程中隐藏原「关联」条，避免与侧栏动效重复 */
+  const [cursorQuietPrepare, setCursorQuietPrepare] = useState(false);
+  /** Cursor 右侧：已打开的会话 Tab（顺序即打开顺序） */
+  const [workbenchSplitTabIds, setWorkbenchSplitTabIds] = useState([]);
+  const [workbenchSessionAttachSelectKey, setWorkbenchSessionAttachSelectKey] = useState(0);
 
   const wsRef = useRef(null);
   const cursorWsRef = useRef(null);
@@ -316,9 +363,12 @@ export default function HomePage() {
   const audioContextRef = useRef(null);
   const workletNodeRef = useRef(null);
   const sourceRef = useRef(null);
+  const analyserRef = useRef(null);
   const partialUiRafRef = useRef(null);
   const pendingPartialUiRef = useRef('');
   const dbSessionIdRef = useRef(null);
+  /** 与 cursorSessionFilePaths 对应的会话 id，避免刚建会话尚未跑完 effect 时路径错位 */
+  const cursorPathsSidRef = useRef(null);
   const agentMessagesRef = useRef(null);
   const cursorPanelScrollRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -327,12 +377,23 @@ export default function HomePage() {
   const partialTextRef = useRef('');
   const phaseRef = useRef('idle');
   const copyBusyRef = useRef(false);
-  const agentSendingRef = useRef(false);
-  const httpSendingRef = useRef(false);
+  const agentSendingKeysRef = useRef(new Set());
+  const httpSendingKeysRef = useRef(new Set());
+  const activeModeIdRef = useRef(activeModeId);
   const runAutoSubmitRef = useRef(null);
   const stopRecognitionRef = useRef(() => {});
   const editorTextareaRef = useRef(null);
   const editorSelRef = useRef({ start: null, end: null });
+  const cursorTailInfoRef = useRef('');
+  const cursorTailErrorRef = useRef('');
+  const cursorTailPollBaselineRef = useRef({ info: '', error: '' });
+  const cursorVoiceBlockRef = useRef(false);
+  /** 切换 Cursor 会话时缓存各 Tab 的输出区，避免来回切换丢内容 */
+  const cursorTabOutputCacheRef = useRef(new Map());
+  const cursorTabCachePrevSidRef = useRef(null);
+  const cursorPendingPromptRef = useRef(null);
+  /** 为 true 时，切换/创建会话的 effect 勿清空 pending/loading（发送流程中） */
+  const cursorSendInFlightRef = useRef(false);
 
   const activeMode = modes.find((m) => m.id === activeModeId) || modes[0];
   const isAsr = activeMode?.kind === 'asr';
@@ -341,22 +402,32 @@ export default function HomePage() {
   const isHttp = activeMode?.kind === 'http';
   const isXiaoaiCli = isCli && activeMode?.cliVariant === 'xiaoai';
   const isCursorCli = isCli && activeMode?.cliVariant === 'cursor';
-  const agentMessages = isAgent ? chatByModeId[activeMode.id] || [] : [];
+  const agentMessages = isAgent
+    ? chatByModeId[agentChatStateKey(activeMode.id, asrSessionId)] || []
+    : [];
+  const workbenchActivityKey = useMemo(
+    () => agentChatStateKey(activeMode?.id, asrSessionId),
+    [activeMode?.id, asrSessionId]
+  );
+  const agentSendingCurrent = Boolean(agentSendingByKey[workbenchActivityKey]);
+  const httpSendingCurrent = Boolean(httpSendingByKey[workbenchActivityKey]);
+  const voiceControlHint = formatOutputVoiceControlHint(
+    activeMode?.voiceControl ?? OUTPUT_VOICE_DEFAULTS
+  );
+
+  const cliEnvPayloadForEnsure = useMemo(
+    () => cliEnvForApi(activeMode),
+    [activeMode?.id, JSON.stringify(normalizeCliEnvRecord(activeMode?.cliEnv))]
+  );
   const isAgentRef = useRef(false);
   useEffect(() => {
     isAgentRef.current = isAgent;
   }, [isAgent]);
 
+  const modeVoiceRef = useRef(OUTPUT_VOICE_DEFAULTS);
   useEffect(() => {
-    const upd = () => setVoiceControlHint(getVoiceControlSummary(isAgentRef.current));
-    upd();
-    window.addEventListener('reso-settings-changed', upd);
-    return () => window.removeEventListener('reso-settings-changed', upd);
-  }, []);
-
-  useEffect(() => {
-    setVoiceControlHint(getVoiceControlSummary(isAgent));
-  }, [isAgent]);
+    modeVoiceRef.current = activeMode?.voiceControl ?? OUTPUT_VOICE_DEFAULTS;
+  }, [activeMode]);
 
   const loadQuickInputs = useCallback(async () => {
     try {
@@ -373,6 +444,32 @@ export default function HomePage() {
     window.addEventListener('reso-quick-inputs-changed', onChanged);
     return () => window.removeEventListener('reso-quick-inputs-changed', onChanged);
   }, [loadQuickInputs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchServerMeta()
+      .then((m) => {
+        if (cancelled) return;
+        if (m) {
+          setResolvedExternalThreadProviderFromServer(m.externalThreadProvider);
+          setServerWorkspaceFallback(m.cwd ?? '');
+        } else {
+          setResolvedExternalThreadProviderFromServer(undefined);
+          setServerWorkspaceFallback('');
+        }
+        setModes(getAllModes());
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedExternalThreadProviderFromServer(undefined);
+          setServerWorkspaceFallback('');
+          setModes(getAllModes());
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const captureEditorSelection = useCallback(() => {
     const ta = editorTextareaRef.current;
@@ -428,11 +525,11 @@ export default function HomePage() {
     });
   }, []);
 
-  const assignAsrSession = (id) => {
+  const assignAsrSession = useCallback((id) => {
     const sid = String(id ?? '').trim();
     dbSessionIdRef.current = sid || null;
     setAsrSessionId(sid || null);
-  };
+  }, []);
 
   const clearAsrSession = () => {
     dbSessionIdRef.current = null;
@@ -454,22 +551,30 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!isAsr && !isCli && !isHttp) return;
+    if (!isAsr && !isCli && !isHttp && !isAgent) return;
     loadWorkspacePickSessions();
-  }, [isAsr, isCli, isHttp, loadWorkspacePickSessions]);
+  }, [isAsr, isCli, isHttp, isAgent, loadWorkspacePickSessions]);
 
   useEffect(() => {
     if (!isCursorCli || !asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId))) {
       setCursorSessionFilePaths(null);
+      cursorPathsSidRef.current = null;
       return;
     }
     let cancelled = false;
-    fetchCursorSessionPaths(asrSessionId)
+    const sid = String(asrSessionId);
+    fetchCursorSessionPaths(sid)
       .then((d) => {
-        if (!cancelled) setCursorSessionFilePaths(d);
+        if (!cancelled) {
+          setCursorSessionFilePaths(d);
+          cursorPathsSidRef.current = sid;
+        }
       })
       .catch(() => {
-        if (!cancelled) setCursorSessionFilePaths(null);
+        if (!cancelled) {
+          setCursorSessionFilePaths(null);
+          cursorPathsSidRef.current = null;
+        }
       });
     return () => {
       cancelled = true;
@@ -477,10 +582,74 @@ export default function HomePage() {
   }, [isCursorCli, asrSessionId]);
 
   useEffect(() => {
-    setCursorTailInfo('');
-    setCursorTailError('');
-    setCursorPendingUserPrompt(null);
-  }, [asrSessionId]);
+    cursorPendingPromptRef.current = cursorPendingUserPrompt;
+  }, [cursorPendingUserPrompt]);
+
+  useEffect(() => {
+    if (!isCursorCli) {
+      cursorTabCachePrevSidRef.current = null;
+      return;
+    }
+    const map = cursorTabOutputCacheRef.current;
+    const prev = cursorTabCachePrevSidRef.current;
+    const next =
+      asrSessionId && SESSION_UUID_RE.test(String(asrSessionId))
+        ? String(asrSessionId)
+        : null;
+    if (prev && prev !== next) {
+      map.set(prev, {
+        tailInfo: cursorTailInfoRef.current,
+        tailError: cursorTailErrorRef.current,
+        pending: cursorPendingPromptRef.current,
+      });
+    }
+    cursorTabCachePrevSidRef.current = next;
+    if (!next) {
+      setCursorTailInfo('');
+      setCursorTailError('');
+      if (!cursorSendInFlightRef.current) {
+        setCursorPendingUserPrompt(null);
+        setCursorStreamLoading(false);
+      }
+      return;
+    }
+    const cached = map.get(next);
+    if (cached) {
+      setCursorTailInfo(cached.tailInfo);
+      setCursorTailError(cached.tailError);
+      setCursorPendingUserPrompt(cached.pending ?? null);
+    } else {
+      setCursorTailInfo('');
+      setCursorTailError('');
+      if (!cursorSendInFlightRef.current) {
+        setCursorPendingUserPrompt(null);
+      }
+    }
+    if (!cursorSendInFlightRef.current) {
+      setCursorStreamLoading(false);
+    }
+  }, [isCursorCli, asrSessionId]);
+
+  useEffect(() => {
+    if (!isCursorCli && !isAgent) {
+      setWorkbenchSplitTabIds([]);
+    }
+  }, [isCursorCli, isAgent]);
+
+  useEffect(() => {
+    if (!isCursorCli && !isAgent) return;
+    const sid =
+      asrSessionId && SESSION_UUID_RE.test(String(asrSessionId))
+        ? String(asrSessionId)
+        : '';
+    if (!sid) return;
+    setWorkbenchSplitTabIds((prev) => (prev.includes(sid) ? prev : [...prev, sid]));
+  }, [isCursorCli, isAgent, asrSessionId]);
+
+  useEffect(() => {
+    cursorTailInfoRef.current = cursorTailInfo;
+    cursorTailErrorRef.current = cursorTailError;
+  }, [cursorTailInfo, cursorTailError]);
 
   useEffect(() => {
     if (!isCursorCli || !asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId))) {
@@ -507,6 +676,12 @@ export default function HomePage() {
           const error = typeof d.error === 'string' ? d.error : '';
           setCursorTailInfo(info);
           setCursorTailError(error);
+          setCursorStreamLoading((prev) => {
+            if (!prev) return prev;
+            const b = cursorTailPollBaselineRef.current;
+            if (info !== b.info || error !== b.error) return false;
+            return prev;
+          });
         }
       } catch {
         /* ignore */
@@ -527,9 +702,8 @@ export default function HomePage() {
 
   const cursorExternalThreadProvider = useMemo(() => {
     if (!activeMode || activeMode.cliVariant !== 'cursor') return CURSOR_EXTERNAL_THREAD_PROVIDER;
-    const p = activeMode.externalThreadProvider;
-    return String(p || CURSOR_EXTERNAL_THREAD_PROVIDER).trim() || CURSOR_EXTERNAL_THREAD_PROVIDER;
-  }, [activeMode]);
+    return getResolvedExternalThreadProvider();
+  }, [activeMode, serverWorkspaceFallback]);
 
   useEffect(() => {
     if (!isCursorCli || !asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId))) {
@@ -543,7 +717,11 @@ export default function HomePage() {
     setExternalThreadsByProvider({});
     setCursorEnsureStatus('loading');
     setCursorEnsureErrorMsg('');
-    apiEnsureSessionExternalThread(asrSessionId, prov)
+    apiEnsureSessionExternalThread(
+      asrSessionId,
+      prov,
+      cliEnvPayloadForEnsure ? { cliEnv: cliEnvPayloadForEnsure } : undefined
+    )
       .then(({ threadId }) => {
         if (cancelled) return;
         setExternalThreadsByProvider({ [prov]: threadId });
@@ -552,7 +730,7 @@ export default function HomePage() {
       .catch((e) => {
         if (cancelled) return;
         setCursorEnsureStatus('error');
-        setCursorEnsureErrorMsg(e.message || '关联失败');
+        setCursorEnsureErrorMsg(e.message || '准备失败');
         setExternalThreadsByProvider({});
       });
     return () => {
@@ -564,6 +742,7 @@ export default function HomePage() {
     activeMode,
     cursorExternalThreadProvider,
     cursorEnsureRetryNonce,
+    cliEnvPayloadForEnsure,
   ]);
 
   const cursorResolvedExternalThreadId = useMemo(() => {
@@ -601,6 +780,9 @@ export default function HomePage() {
     el.scrollTop = el.scrollHeight;
   }, [cursorTailInfo, cursorTailError, cursorPendingUserPrompt, cursorParsedOutput.blocks.length]);
 
+  const cliWorkspaceFallbackStr =
+    serverWorkspaceFallback === undefined ? '' : serverWorkspaceFallback;
+
   const cursorTriadInputs = useMemo(() => {
     if (!isCursorCli || !activeMode) {
       return { 模型: '', 工作空间: '', 输出路径: '' };
@@ -612,7 +794,8 @@ export default function HomePage() {
     () => ({
       paragraph: `${editorContent}${partialText || ''}`.trim(),
       sessionId: asrSessionId ? String(asrSessionId) : '',
-      workspace: String(activeMode?.cliWorkspace || '').trim(),
+      workspace:
+        String(activeMode?.cliWorkspace || '').trim() || String(cliWorkspaceFallbackStr).trim(),
       cursorStdoutAbsPath: cursorSessionFilePaths?.infoTxtAbs || '',
       cursorStderrAbsPath: cursorSessionFilePaths?.errorTxtAbs || '',
       externalThreadId: cursorResolvedExternalThreadId,
@@ -622,6 +805,7 @@ export default function HomePage() {
       partialText,
       asrSessionId,
       activeMode?.cliWorkspace,
+      cliWorkspaceFallbackStr,
       cursorSessionFilePaths,
       cursorResolvedExternalThreadId,
     ]
@@ -636,8 +820,16 @@ export default function HomePage() {
   const cursorTriadReady = useMemo(() => {
     if (!isCursorCli || !activeMode) return true;
     const tmpl = activeMode.cliTemplate || CURSOR_CLI_DEFAULT_TEMPLATE;
-    return cursorCliReady(tmpl, activeMode.angleSlots || [], cursorTriadCtx);
+    return cursorCliReadyIgnoringProvisioningDeps(
+      tmpl,
+      activeMode.angleSlots || [],
+      cursorTriadCtx
+    );
   }, [isCursorCli, activeMode, cursorTriadCtx]);
+
+  useEffect(() => {
+    cursorVoiceBlockRef.current = isCursorCli && !cursorTriadReady;
+  }, [isCursorCli, cursorTriadReady]);
 
   const patchCursorTriadField = useCallback(
     (label, value) => {
@@ -647,11 +839,15 @@ export default function HomePage() {
       const next = slots.map((s) =>
         s.label === label ? { ...s, source: 'custom', customValue: value } : s
       );
+      const mergedForWs = mergeAngleSlotsWithDefaults(tmpl, next);
+      const cliWorkspace = deriveCursorCliWorkspace(
+        mergedForWs,
+        String(activeMode.cliWorkspace || '')
+      );
       const ext = {
         commandTemplate: tmpl,
         angleSlots: next,
-        externalThreadProvider:
-          activeMode.externalThreadProvider || CURSOR_EXTERNAL_THREAD_PROVIDER,
+        cliWorkspace,
       };
       if (activeMode.builtIn) {
         saveBuiltinOutputOverride(activeMode.id, { extensions: ext });
@@ -661,6 +857,82 @@ export default function HomePage() {
       setModes(getAllModes());
     },
     [activeMode]
+  );
+
+  const getCursorTabTitle = useCallback(
+    (tid) => {
+      const rec = workspacePickSessions.find((s) => String(s.id) === String(tid));
+      if (rec) {
+        const t = (rec.list_title || rec.preview || '').trim();
+        const short = t ? (t.length > 16 ? `${t.slice(0, 16)}…` : t) : '';
+        if (short) return short;
+      }
+      return `会话 ${String(tid).slice(0, 8)}…`;
+    },
+    [workspacePickSessions]
+  );
+
+  const cursorWorkbenchReadinessHint = useMemo(() => {
+    if (!isCursorCli || !activeMode || cursorTriadReady) return '';
+    const tmpl = activeMode.cliTemplate || CURSOR_CLI_DEFAULT_TEMPLATE;
+    return (
+      cursorCliFillHint(tmpl, activeMode.angleSlots || [], cursorTriadCtx) ||
+      '请完成「入参」中的模型、工作空间等后再复制或发送。'
+    );
+  }, [isCursorCli, activeMode, cursorTriadCtx, cursorTriadReady]);
+
+  const closeCursorWorkbenchTab = useCallback(
+    async (sid) => {
+      const id = String(sid);
+      if (
+        !window.confirm(
+          '关闭标签将从数据库永久删除该会话及其段落（与「会话」页删除一致）。确定吗？'
+        )
+      ) {
+        return;
+      }
+      try {
+        await apiDeleteSession(id);
+      } catch (e) {
+        setStatus(e.message || '删除会话失败');
+        return;
+      }
+
+      for (const m of getAllModes()) {
+        if (m.kind === 'agent') removeAgentThreadIdForSession(m.id, id);
+      }
+
+      cursorTabOutputCacheRef.current.delete(id);
+      const wasActive = String(asrSessionId || '') === id;
+
+      setWorkbenchSplitTabIds((prev) => {
+        const next = prev.filter((x) => String(x) !== id);
+        if (wasActive) {
+          const fb = next.length > 0 ? next[next.length - 1] : null;
+          queueMicrotask(() => {
+            if (fb) {
+              dbSessionIdRef.current = fb;
+              setAsrSessionId(fb);
+              setStatus(
+                `已删除会话；当前 · ${fb.slice(0, 8)}…（识别与保存将归入本会话）`
+              );
+            } else {
+              dbSessionIdRef.current = null;
+              setAsrSessionId(null);
+              setStatus('已删除会话；请新建会话或从「已有会话」打开后再识别');
+            }
+          });
+        } else {
+          queueMicrotask(() => {
+            setStatus(`已删除会话 · ${id.slice(0, 8)}…`);
+          });
+        }
+        return next;
+      });
+
+      loadWorkspacePickSessions();
+    },
+    [asrSessionId, loadWorkspacePickSessions]
   );
 
   const workspacePickOptions = useMemo(() => {
@@ -707,17 +979,24 @@ export default function HomePage() {
     copyBusyRef.current = copyBusy;
   }, [copyBusy]);
   useEffect(() => {
-    agentSendingRef.current = agentSending;
-  }, [agentSending]);
-  useEffect(() => {
-    httpSendingRef.current = httpSending;
-  }, [httpSending]);
+    activeModeIdRef.current = activeModeId;
+  }, [activeModeId]);
 
   useEffect(() => {
     if (!isAgent || !activeMode) return;
-    const tid = getThreadId(activeMode.id);
+    const sid = asrSessionId && SESSION_UUID_RE.test(String(asrSessionId)) ? String(asrSessionId) : '';
+    const key = agentChatStateKey(activeMode.id, sid);
+    if (!sid) {
+      setChatByModeId((s) => ({ ...s, [key]: [] }));
+      return;
+    }
+    const tid = getAgentThreadIdForSession(activeMode.id, sid);
     if (!tid) {
-      setChatByModeId((s) => ({ ...s, [activeMode.id]: [] }));
+      setChatByModeId((s) => {
+        const cur = s[key];
+        if (Array.isArray(cur) && cur.length > 0) return s;
+        return { ...s, [key]: [] };
+      });
       return;
     }
     let cancelled = false;
@@ -727,19 +1006,19 @@ export default function HomePage() {
         if (cancelled) return;
         setChatByModeId((s) => ({
           ...s,
-          [activeMode.id]: data.messages || [],
+          [key]: data.messages || [],
         }));
       } catch {
         if (!cancelled) {
-          removeThreadId(activeMode.id);
-          setChatByModeId((s) => ({ ...s, [activeMode.id]: [] }));
+          removeAgentThreadIdForSession(activeMode.id, sid);
+          setChatByModeId((s) => ({ ...s, [key]: [] }));
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isAgent, activeMode?.id]);
+  }, [isAgent, activeMode?.id, asrSessionId]);
 
   const cleanupAudio = useCallback(() => {
     const node = workletNodeRef.current;
@@ -748,6 +1027,8 @@ export default function HomePage() {
       node.disconnect();
       workletNodeRef.current = null;
     }
+    analyserRef.current?.disconnect();
+    analyserRef.current = null;
     sourceRef.current?.disconnect();
     sourceRef.current = null;
     audioContextRef.current?.close().catch(() => {});
@@ -785,23 +1066,34 @@ export default function HomePage() {
   const scheduleSilenceTimer = useCallback(() => {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
-    const cfg = getVoiceSettings();
+    const cfg = modeVoiceRef.current;
     if (phaseRef.current !== 'recording') return;
     const agentMode = isAgentRef.current;
-    if (!agentMode) {
-      if (cfg.endMode !== 'silence' && cfg.endMode !== 'both') return;
-    }
-    const ms = agentMode
-      ? Math.max(400, Math.min(5000, AGENT_VOICE_SILENCE_SEC * 1000))
-      : Math.max(1, Math.min(60, Number(cfg.silenceSeconds) || 5)) * 1000;
+    if (cfg.endMode !== END_MODES.silence && cfg.endMode !== END_MODES.both) return;
+    if (!agentMode && cursorVoiceBlockRef.current) return;
+    const sec =
+      Number(cfg.silenceSeconds) > 0
+        ? Number(cfg.silenceSeconds)
+        : agentMode
+          ? AGENT_VOICE_SILENCE_SEC
+          : 5;
+    const ms = Math.max(400, Math.min(60000, sec * 1000));
     silenceTimerRef.current = setTimeout(() => {
       silenceTimerRef.current = null;
       if (phaseRef.current !== 'recording') return;
       const seg = `${editorContentRef.current}${partialTextRef.current}`.trim();
-      if (!seg || copyBusyRef.current || agentSendingRef.current || httpSendingRef.current) return;
-      const c = getVoiceSettings();
+      const sid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
+      const actKey = agentChatStateKey(activeModeIdRef.current, sid || null);
+      if (
+        !seg ||
+        copyBusyRef.current ||
+        agentSendingKeysRef.current.has(actKey) ||
+        httpSendingKeysRef.current.has(actKey)
+      )
+        return;
+      const c = modeVoiceRef.current;
       let out = seg;
-      if (!agentMode && c.stripEndPhrase && matchesEndPhrase(seg, c.endPhrases)) {
+      if (c.stripEndPhrase && matchesEndPhrase(seg, c.endPhrases)) {
         const stripped = stripMatchedPhrase(seg, c.endPhrases).trim();
         if (stripped) out = stripped;
       }
@@ -810,9 +1102,9 @@ export default function HomePage() {
   }, []);
 
   const tryPhraseAuto = useCallback((fullEditorText) => {
-    if (isAgentRef.current) return;
-    const cfg = getVoiceSettings();
-    if (cfg.endMode !== 'phrase' && cfg.endMode !== 'both') return;
+    if (!isAgentRef.current && cursorVoiceBlockRef.current) return;
+    const cfg = modeVoiceRef.current;
+    if (cfg.endMode !== END_MODES.phrase && cfg.endMode !== END_MODES.both) return;
     const combined = fullEditorText.trim();
     if (!combined || !matchesEndPhrase(combined, cfg.endPhrases)) return;
     /** 结束词触发：入库/发 Agent 一律去掉关键词（与设置里「去掉结束词」无关） */
@@ -823,9 +1115,9 @@ export default function HomePage() {
 
   /** 停止识别时补检：结束词可能只在 partial、未单独出一句 sentenceEnd */
   const tryPhraseAutoOnBuffers = useCallback(() => {
-    if (isAgentRef.current) return;
-    const cfg = getVoiceSettings();
-    if (cfg.endMode !== 'phrase' && cfg.endMode !== 'both') return;
+    if (!isAgentRef.current && cursorVoiceBlockRef.current) return;
+    const cfg = modeVoiceRef.current;
+    if (cfg.endMode !== END_MODES.phrase && cfg.endMode !== END_MODES.both) return;
     const combined = `${editorContentRef.current}${partialTextRef.current}`.trim();
     if (!combined || !matchesEndPhrase(combined, cfg.endPhrases)) return;
     const out = stripMatchedPhrase(combined, cfg.endPhrases).trim();
@@ -937,6 +1229,13 @@ export default function HomePage() {
     };
     const source = ac.createMediaStreamSource(streamRef.current);
     sourceRef.current = source;
+
+    const analyser = ac.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.72;
+    analyserRef.current = analyser;
+    source.connect(analyser);
+
     const mute = ac.createGain();
     mute.gain.value = 0;
     source.connect(node);
@@ -948,10 +1247,20 @@ export default function HomePage() {
     if (id === activeModeId) return;
     if (phase !== 'idle') abortAsrSession();
     const next = modes.find((m) => m.id === id);
+    /** 进入右侧分栏模式时勿沿用其它模式绑定的会话，否则会出现「会话 xxx」标签但语义已不对 */
+    const nextUsesRightSplit =
+      next?.kind === 'agent' || (next?.kind === 'cli' && next?.cliVariant === 'cursor');
+    if (nextUsesRightSplit) {
+      clearAsrSession();
+      setWorkbenchSplitTabIds([]);
+      setWorkbenchSessionAttachSelectKey((k) => k + 1);
+      cursorTabOutputCacheRef.current.clear();
+      cursorTabCachePrevSidRef.current = null;
+    }
     setActiveModeId(id);
     setStatus(
       next?.kind === 'agent'
-        ? '右侧为对话区；语音在短暂停顿后会自动发送（无需说结束词）'
+        ? '右侧为对话区；可「新建会话」或「已有会话」切换；语音在短暂停顿后会自动发送（无需说结束词）'
         : next?.kind === 'http'
           ? '填写上方请求 URL 与协议；正文会随 OpenAI Chat 或 AGUI 体 POST 到该地址'
           : next?.kind === 'cli'
@@ -965,11 +1274,15 @@ export default function HomePage() {
   };
 
   const onNewAsrSession = async () => {
-    if (!isAsr && !isCli && !isHttp) return;
+    if (!isAsr && !isCli && !isHttp && !isAgent) return;
     try {
       const sid = await apiCreateSession();
       assignAsrSession(sid);
-      setStatus(`已新建会话 · ${sid.slice(0, 8)}…（识别与保存将归入本会话）`);
+      setStatus(
+        isAgent
+          ? `已新建会话 · ${sid.slice(0, 8)}…（本模式对话与段落将归入本会话）`
+          : `已新建会话 · ${sid.slice(0, 8)}…（识别与保存将归入本会话）`
+      );
       loadWorkspacePickSessions();
     } catch (e) {
       setStatus(e.message || '新建会话失败');
@@ -1120,6 +1433,8 @@ export default function HomePage() {
       node.disconnect();
       workletNodeRef.current = null;
     }
+    analyserRef.current?.disconnect();
+    analyserRef.current = null;
     sourceRef.current?.disconnect();
     sourceRef.current = null;
     audioContextRef.current?.close().catch(() => {});
@@ -1192,33 +1507,42 @@ export default function HomePage() {
   const performAgentPipeline = useCallback(
     async (segment) => {
       if (!activeMode || activeMode.kind !== 'agent') return false;
-      if (agentSendingRef.current) return false;
       const text = String(segment || '').trim();
       if (!text) return false;
       const modeId = activeMode.id;
-      setAgentSending(true);
+      let ensuredSid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
+      if (!ensuredSid || !SESSION_UUID_RE.test(ensuredSid)) {
+        setStatus('正在创建会话…');
+        try {
+          ensuredSid = String(await apiCreateSession());
+          assignAsrSession(ensuredSid);
+          loadWorkspacePickSessions();
+        } catch (e) {
+          setStatus(e.message || '无法创建会话，请检查数据库配置');
+          return false;
+        }
+      }
+      const chatKey = agentChatStateKey(modeId, ensuredSid);
+      if (agentSendingKeysRef.current.has(chatKey)) return false;
+      let streamThreadId = getAgentThreadIdForSession(modeId, ensuredSid);
+      agentSendingKeysRef.current.add(chatKey);
+      setAgentSendingByKey((s) => ({ ...s, [chatKey]: true }));
       setStatus('正在请求回复…');
-      let streamThreadId = getThreadId(modeId);
       setChatByModeId((s) => {
-        const p = s[modeId] || [];
+        const p = s[chatKey] || [];
         return {
           ...s,
-          [modeId]: [...p, { role: 'user', content: text }, { role: 'assistant', content: '' }],
+          [chatKey]: [...p, { role: 'user', content: text }, { role: 'assistant', content: '' }],
         };
       });
       try {
-        const sid = dbSessionIdRef.current;
         let prefix = '';
-        if (sid) {
-          try {
-            const saved = await apiSaveParagraph(sid, text);
-            const n = saved.paragraphIndex;
-            prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
-          } catch (e) {
-            prefix = `段落未入库（${e.message || '错误'}）· `;
-          }
-        } else {
-          prefix = '未绑定数据库会话，段落未入库 · ';
+        try {
+          const saved = await apiSaveParagraph(ensuredSid, text);
+          const n = saved.paragraphIndex;
+          prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+        } catch (e) {
+          prefix = `段落未入库（${e.message || '错误'}）· `;
         }
         try {
           await navigator.clipboard.writeText(text);
@@ -1227,9 +1551,9 @@ export default function HomePage() {
           setEditorContent(text);
           setPartialText('');
           setChatByModeId((s) => {
-            const p = s[modeId] || [];
+            const p = s[chatKey] || [];
             const next = p.slice(0, -2);
-            return { ...s, [modeId]: next };
+            return { ...s, [chatKey]: next };
           });
           return false;
         }
@@ -1239,7 +1563,7 @@ export default function HomePage() {
         const resolvedModel = getResolvedResoChatApiModelId();
         const model = resolvedModel || vs.agentModel || undefined;
         const dashscopeApiKey = getResolvedResoChatApiKey() || vs.dashscopeApiKey || undefined;
-        const threadId = getThreadId(modeId);
+        const threadId = getAgentThreadIdForSession(modeId, ensuredSid);
         await apiAgentChatTurnStream(
           {
             modeId,
@@ -1252,11 +1576,11 @@ export default function HomePage() {
           (ev) => {
             if (ev.type === 'meta' && ev.threadId) {
               streamThreadId = ev.threadId;
-              setThreadId(modeId, ev.threadId);
+              setAgentThreadIdForSession(modeId, ensuredSid, ev.threadId);
             }
             if (ev.type === 'delta' && ev.text) {
               setChatByModeId((s) => {
-                const list = [...(s[modeId] || [])];
+                const list = [...(s[chatKey] || [])];
                 const last = list[list.length - 1];
                 if (last?.role === 'assistant') {
                   list[list.length - 1] = {
@@ -1264,11 +1588,11 @@ export default function HomePage() {
                     content: `${last.content || ''}${ev.text}`,
                   };
                 }
-                return { ...s, [modeId]: list };
+                return { ...s, [chatKey]: list };
               });
             }
             if (ev.type === 'done' && Array.isArray(ev.messages)) {
-              setChatByModeId((s) => ({ ...s, [modeId]: ev.messages }));
+              setChatByModeId((s) => ({ ...s, [chatKey]: ev.messages }));
             }
           }
         );
@@ -1276,27 +1600,31 @@ export default function HomePage() {
         return true;
       } catch (e) {
         setStatus(e.message || '发送失败');
-        const tid = getThreadId(modeId) || streamThreadId;
+        const tid = getAgentThreadIdForSession(modeId, ensuredSid) || streamThreadId;
         if (tid) {
           try {
             const data = await fetchChatThread(tid);
-            setChatByModeId((s) => ({ ...s, [modeId]: data.messages || [] }));
+            setChatByModeId((s) => ({ ...s, [chatKey]: data.messages || [] }));
           } catch {
             /* 保持当前列表 */
           }
         }
         return false;
       } finally {
-        setAgentSending(false);
+        agentSendingKeysRef.current.delete(chatKey);
+        setAgentSendingByKey((s) => {
+          const n = { ...s };
+          delete n[chatKey];
+          return n;
+        });
       }
     },
-    [activeMode]
+    [activeMode, assignAsrSession, loadWorkspacePickSessions]
   );
 
   const performHttpPipeline = useCallback(
     async (segment) => {
       if (!activeMode || activeMode.kind !== 'http') return false;
-      if (httpSendingRef.current) return false;
       const text = String(segment || '').trim();
       if (!text) return false;
       const url = (activeMode.requestUrl || '').trim();
@@ -1304,7 +1632,11 @@ export default function HomePage() {
         setStatus('请填写 HTTP 请求 URL（可在上方或「输出」页配置）');
         return false;
       }
-      setHttpSending(true);
+      const sid0 = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
+      const httpKey = agentChatStateKey(activeMode.id, sid0 || null);
+      if (httpSendingKeysRef.current.has(httpKey)) return false;
+      httpSendingKeysRef.current.add(httpKey);
+      setHttpSendingByKey((s) => ({ ...s, [httpKey]: true }));
       setStatus('正在复制、保存段落并发送 HTTP 请求…');
       try {
         const sid = dbSessionIdRef.current;
@@ -1336,9 +1668,14 @@ export default function HomePage() {
                 model: resolvedChat || vs.agentModel || undefined,
                 messages: [{ role: 'user', content: text }],
               };
+        const targetEnv = normalizeCliEnvRecord(activeMode.cliEnv);
+        const headers = { 'Content-Type': 'application/json' };
+        if (Object.keys(targetEnv).length > 0) {
+          headers['X-Reso-Target-Env'] = JSON.stringify(targetEnv);
+        }
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(body),
           mode: 'cors',
         });
@@ -1355,11 +1692,89 @@ export default function HomePage() {
         setStatus(e.message || 'HTTP 请求失败');
         return false;
       } finally {
-        setHttpSending(false);
+        httpSendingKeysRef.current.delete(httpKey);
+        setHttpSendingByKey((s) => {
+          const n = { ...s };
+          delete n[httpKey];
+          return n;
+        });
       }
     },
     [activeMode]
   );
+
+  /** Cursor 发送：按需建会话、拉路径、ensure；quiet 时不改底部状态栏、不标红关联区 */
+  const provisionCursorWorkbenchCli = useCallback(async (opts) => {
+    const quiet = Boolean(opts?.quiet);
+    const statusHint = (msg) => {
+      if (!quiet) setStatus(msg);
+    };
+    if (!activeMode || activeMode.cliVariant !== 'cursor') {
+      return {
+        ok: true,
+        sid: dbSessionIdRef.current,
+        paths: cursorSessionFilePaths,
+        threadId: cursorResolvedExternalThreadId,
+      };
+    }
+    const prov = getResolvedExternalThreadProvider();
+
+    let sid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
+    if (!sid || !SESSION_UUID_RE.test(sid)) {
+      statusHint('正在创建会话…');
+      try {
+        sid = String(await apiCreateSession());
+        assignAsrSession(sid);
+        loadWorkspacePickSessions();
+      } catch (e) {
+        return { ok: false, error: e.message || '无法创建会话' };
+      }
+    }
+
+    let paths = cursorSessionFilePaths;
+    if (cursorPathsSidRef.current !== sid || !paths?.infoTxtAbs) {
+      statusHint('正在解析 Cursor 输出路径…');
+      try {
+        paths = await fetchCursorSessionPaths(sid);
+        setCursorSessionFilePaths(paths);
+        cursorPathsSidRef.current = sid;
+      } catch (e) {
+        return { ok: false, error: e.message || '解析输出路径失败' };
+      }
+    }
+
+    let threadId = String((externalThreadsByProvider[prov] || '').trim());
+    if (!threadId) {
+      statusHint('正在准备…');
+      try {
+        const r = await apiEnsureSessionExternalThread(
+          sid,
+          prov,
+          cliEnvPayloadForEnsure ? { cliEnv: cliEnvPayloadForEnsure } : undefined
+        );
+        threadId = r.threadId;
+        setExternalThreadsByProvider((prev) => ({ ...prev, [prov]: r.threadId }));
+        setCursorEnsureStatus('ok');
+        setCursorEnsureErrorMsg('');
+      } catch (e) {
+        if (!quiet) {
+          setCursorEnsureStatus('error');
+          setCursorEnsureErrorMsg(e.message || '准备失败');
+        }
+        return { ok: false, error: e.message || '准备失败' };
+      }
+    }
+
+    return { ok: true, sid, paths, threadId };
+  }, [
+    activeMode,
+    assignAsrSession,
+    cliEnvPayloadForEnsure,
+    cursorResolvedExternalThreadId,
+    cursorSessionFilePaths,
+    externalThreadsByProvider,
+    loadWorkspacePickSessions,
+  ]);
 
   const performCliCopyOnly = useCallback(async () => {
     if (!activeMode || activeMode.kind !== 'cli') return false;
@@ -1371,17 +1786,17 @@ export default function HomePage() {
       text,
       sid,
       cursorSessionFilePaths,
-      cursorResolvedExternalThreadId
+      cursorResolvedExternalThreadId,
+      cliWorkspaceFallbackStr
     );
     if (computed.error) {
       setStatus(`${computed.error}，再复制指令`);
       return false;
     }
     setCopyBusy(true);
-    setStatus('正在复制指令…');
     try {
       await navigator.clipboard.writeText(computed.cmd);
-      setStatus('已复制指令到剪贴板（未保存段落、未清空编辑区）');
+      setStatus('复制成功到剪贴板');
       return true;
     } catch {
       setStatus('剪贴板写入失败');
@@ -1389,7 +1804,12 @@ export default function HomePage() {
     } finally {
       setCopyBusy(false);
     }
-  }, [activeMode, cursorSessionFilePaths, cursorResolvedExternalThreadId]);
+  }, [
+    activeMode,
+    cliWorkspaceFallbackStr,
+    cursorResolvedExternalThreadId,
+    cursorSessionFilePaths,
+  ]);
 
   const performCliPipeline = useCallback(
     async (segment) => {
@@ -1397,13 +1817,94 @@ export default function HomePage() {
       if (copyBusyRef.current) return false;
       const text = String(segment || '').trim();
       if (!text) return false;
-      const sid = dbSessionIdRef.current;
+
+      if (activeMode.cliVariant === 'cursor') {
+        setCopyBusy(true);
+        cursorSendInFlightRef.current = true;
+        setCursorQuietPrepare(true);
+        setCursorAwaitingCliPaste(true);
+        setCursorStreamLoading(true);
+        setCursorPendingUserPrompt(text);
+        setEditorContent('');
+        setPartialText('');
+        try {
+          const p = await provisionCursorWorkbenchCli({ quiet: true });
+          if (!p.ok) {
+            setCursorStreamLoading(false);
+            setCursorPendingUserPrompt(null);
+            setCursorAwaitingCliPaste(false);
+            setEditorContent(text);
+            setPartialText('');
+            setStatus(`${p.error}，请重试`);
+            return false;
+          }
+          const computed = computeWorkbenchCliCommand(
+            activeMode,
+            text,
+            p.sid,
+            p.paths,
+            p.threadId,
+            cliWorkspaceFallbackStr
+          );
+          if (computed.error) {
+            setCursorStreamLoading(false);
+            setCursorPendingUserPrompt(null);
+            setCursorAwaitingCliPaste(false);
+            setEditorContent(text);
+            setPartialText('');
+            setStatus(`${computed.error}，请重试`);
+            return false;
+          }
+          let prefix = '';
+          const sid = p.sid;
+          if (sid) {
+            try {
+              const saved = await apiSaveParagraph(sid, text);
+              const n = saved.paragraphIndex;
+              prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+            } catch (e) {
+              prefix = `段落未入库（${e.message || '错误'}）· `;
+            }
+          } else {
+            prefix = '未绑定数据库会话，段落未入库 · ';
+          }
+          cursorTailPollBaselineRef.current = {
+            info: cursorTailInfoRef.current,
+            error: cursorTailErrorRef.current,
+          };
+          try {
+            await navigator.clipboard.writeText(computed.cmd);
+          } catch {
+            setCursorStreamLoading(false);
+            setCursorPendingUserPrompt(null);
+            setCursorAwaitingCliPaste(false);
+            setEditorContent(text);
+            setPartialText('');
+            setStatus(`${prefix}剪贴板写入失败`);
+            return false;
+          }
+          setCursorAwaitingCliPaste(false);
+          setStatus(`${prefix}指令已复制，请在终端粘贴执行`);
+          return true;
+        } finally {
+          cursorSendInFlightRef.current = false;
+          setCursorQuietPrepare(false);
+          setCopyBusy(false);
+        }
+      }
+
+      const p = await provisionCursorWorkbenchCli();
+      if (!p.ok) {
+        setStatus(`${p.error}，再发送`);
+        return false;
+      }
       const computed = computeWorkbenchCliCommand(
         activeMode,
         text,
-        sid,
-        cursorSessionFilePaths,
-        cursorResolvedExternalThreadId
+        p.sid,
+        p.paths,
+        p.threadId,
+        cliWorkspaceFallbackStr
       );
       if (computed.error) {
         setStatus(`${computed.error}，再发送`);
@@ -1413,6 +1914,7 @@ export default function HomePage() {
       setStatus('正在保存段落并复制指令…');
       try {
         let prefix = '';
+        const sid = p.sid;
         if (sid) {
           try {
             const saved = await apiSaveParagraph(sid, text);
@@ -1430,9 +1932,6 @@ export default function HomePage() {
           setStatus(`${prefix}剪贴板写入失败`);
           return false;
         }
-        if (activeMode.cliVariant === 'cursor') {
-          setCursorPendingUserPrompt(text);
-        }
         setEditorContent('');
         setPartialText('');
         setStatus(`${prefix}已发送：指令已复制，编辑区已清空`);
@@ -1441,7 +1940,7 @@ export default function HomePage() {
         setCopyBusy(false);
       }
     },
-    [activeMode, cursorSessionFilePaths, cursorResolvedExternalThreadId]
+    [activeMode, cliWorkspaceFallbackStr, provisionCursorWorkbenchCli]
   );
 
   const runAutoSubmit = useCallback(
@@ -1450,10 +1949,17 @@ export default function HomePage() {
       const text = String(segment || '').trim();
       if (!text) return;
       if (autoSubmitLockRef.current) return;
-      if (copyBusyRef.current || agentSendingRef.current || httpSendingRef.current) return;
+      const sid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
+      const actKey = agentChatStateKey(activeModeIdRef.current, sid || null);
+      if (
+        copyBusyRef.current ||
+        agentSendingKeysRef.current.has(actKey) ||
+        httpSendingKeysRef.current.has(actKey)
+      )
+        return;
       autoSubmitLockRef.current = true;
       try {
-        const cfg = getVoiceSettings();
+        const cfg = modeVoiceRef.current;
         let ok = false;
         if (isAsr) {
           ok = await performAsrSave(text);
@@ -1464,14 +1970,7 @@ export default function HomePage() {
         } else if (isHttp) {
           ok = await performHttpPipeline(text);
         }
-        /** RESO 连续对话：停顿发送后保持实时识别。标准等：结束词不关麦；静音超时且勾选设置时可停识别 */
-        if (
-          ok &&
-          cfg.stopMicAfterAuto &&
-          trigger === 'silence' &&
-          phaseRef.current === 'recording' &&
-          !isAgent
-        ) {
+        if (ok && cfg.stopMicAfterAuto && trigger === 'silence' && phaseRef.current === 'recording') {
           stopRecognitionRef.current?.();
         }
       } finally {
@@ -1504,42 +2003,33 @@ export default function HomePage() {
 
   /** Agent 底栏：复制、尽量存段、再发给模型（模型可在设置里覆盖） */
   const submitAgentPrimary = () => {
-    if (agentSending) return Promise.resolve();
+    if (agentSendingCurrent) return Promise.resolve();
     return performAgentPipeline(`${editorContent}${partialText || ''}`.trim());
   };
 
   const submitHttpPrimary = () => {
-    if (httpSending) return Promise.resolve();
+    if (httpSendingCurrent) return Promise.resolve();
     return performHttpPipeline(`${editorContent}${partialText || ''}`.trim());
   };
 
   const clearAgentChat = async () => {
     if (!activeMode || !isAgent) return;
-    const tid = getThreadId(activeMode.id);
+    const sid = asrSessionId && SESSION_UUID_RE.test(String(asrSessionId)) ? String(asrSessionId) : '';
+    if (!sid) {
+      setStatus('请先新建会话或从「已有会话」打开当前会话');
+      return;
+    }
+    const tid = getAgentThreadIdForSession(activeMode.id, sid);
+    const key = agentChatStateKey(activeMode.id, sid);
     try {
       if (tid) {
         await apiDeleteChatMessages(tid);
       }
-      setChatByModeId((s) => ({ ...s, [activeMode.id]: [] }));
+      setChatByModeId((s) => ({ ...s, [key]: [] }));
       setStatus('已清空本条线程下的消息（线程仍在，可继续聊）');
     } catch (e) {
       setStatus(e.message || '清空失败');
     }
-  };
-
-  const startNewAgentThread = async () => {
-    if (!activeMode || !isAgent) return;
-    const tid = getThreadId(activeMode.id);
-    try {
-      if (tid) {
-        await apiDeleteChatThread(tid);
-      }
-    } catch {
-      /* 线程可能已删 */
-    }
-    removeThreadId(activeMode.id);
-    setChatByModeId((s) => ({ ...s, [activeMode.id]: [] }));
-    setStatus('已开始新对话线程（下次发送会新建存储）');
   };
 
   const submitNewMode = (e) => {
@@ -1581,6 +2071,7 @@ export default function HomePage() {
   const onDeleteCustomMode = (id) => {
     if (!window.confirm('删除该自定义模式？其对话记录也会从当前页面清空。')) return;
     removeThreadId(id);
+    removeAllAgentThreadIdsForMode(id);
     const next = removeCustomMode(id);
     setModes(next);
     setChatByModeId((s) => {
@@ -1627,7 +2118,6 @@ export default function HomePage() {
 
   const onCliWorkspaceChange = (v) => {
     if (!activeMode?.id || activeMode.kind !== 'cli' || activeMode.cliVariant === 'xiaoai') return;
-    if (activeMode.cliVariant === 'cursor') return;
     setModes(updateCliModeFields(activeMode.id, { cliWorkspace: v }));
   };
 
@@ -1642,7 +2132,9 @@ export default function HomePage() {
   };
 
   return (
-    <div className={`home-page home-page--compact ${isAgent ? 'home-page--split' : ''}`}>
+    <div
+      className={`home-page home-page--compact ${isAgent || isCursorCli ? 'home-page--split' : ''}`}
+    >
       <div
         className={`home-card ${isAgent || isCursorCli ? 'home-card--with-agent' : ''}`}
       >
@@ -1672,7 +2164,7 @@ export default function HomePage() {
                 />
               </div>
             </div>
-            <p className="top-voice-hint" title="与设置里「系统控制」同步；RESO 为约 1.2s 停顿后自动发送">
+            <p className="top-voice-hint" title="来自当前目标的「识别结束策略」配置">
               {voiceControlHint}
             </p>
             <p className={`status ${recording ? 'recording' : ''}`}>{status}</p>
@@ -1682,7 +2174,7 @@ export default function HomePage() {
             <div className="panel-head">
               <div className="panel-title">
                 <h2 className="panel-title-heading">
-                  {isAgent
+                  {isAgent || isCursorCli
                     ? '输入'
                     : isHttp
                       ? '正文（请求内容）'
@@ -1692,7 +2184,7 @@ export default function HomePage() {
                           : '段落（命令占位）'
                         : '正文'}
                 </h2>
-                {isAsr || isCli || isHttp ? (
+                {isAsr || (isCli && !isCursorCli) || isHttp ? (
                   <select
                     className="panel-session-select"
                     value={asrSessionId || ''}
@@ -1726,7 +2218,7 @@ export default function HomePage() {
                   </select>
                 ) : null}
               </div>
-              {isAsr || isCli || isHttp ? (
+              {isAsr || (isCli && !isCursorCli) || isHttp ? (
                 <div className="panel-head-actions">
                   {isCli ? (
                     <button
@@ -1772,14 +2264,15 @@ export default function HomePage() {
                   OpenAI Chat：POST JSON 含 <code className="settings-code">messages</code>（user 一条）与可选{' '}
                   <code className="settings-code">model</code>（取自设置里的对话模型）。AGUI：发送{' '}
                   <code className="settings-code">user_message</code> 与{' '}
-                  <code className="settings-code">session_id</code>。注意目标站 CORS。
+                  <code className="settings-code">session_id</code>。注意目标站 CORS；若配置了目标环境变量，会带请求头{' '}
+                  <code className="settings-code">X-Reso-Target-Env</code>（在「目标管理」中编辑）。
                 </p>
               </div>
             ) : null}
             <div className="editor-wrap">
               <div className="editor-body editor-body--stack">
                 <div
-                  className={`editor-textarea-wrap editor-textarea-wrap--fill ${isAgent ? 'editor-textarea-wrap--agent' : ''}`}
+                  className={`editor-textarea-wrap editor-textarea-wrap--fill ${isAgent || isCursorCli ? 'editor-textarea-wrap--agent' : ''}`}
                 >
                   <button
                     type="button"
@@ -1857,7 +2350,12 @@ export default function HomePage() {
                   {recording ? (
                     <div className="editor-recording-strip" aria-live="polite">
                       <span className="editor-recording-badge">识别中</span>
-                      <div className="editor-recording-partial">{partialText}</div>
+                      <div className="editor-recording-partial">
+                        <span className="editor-recording-partial__text">{partialText}</span>
+                        {partialText.trim() ? (
+                          <VoiceWaveVisualizer active={recording} analyserRef={analyserRef} inline />
+                        ) : null}
+                      </div>
                     </div>
                   ) : (
                     <div className="editor-bottom-spacer" aria-hidden />
@@ -1874,11 +2372,33 @@ export default function HomePage() {
                       </button>
                     ) : isCli ? (
                       <div className="editor-bottom-cli-actions">
+                        {isCursorCli ? (
+                          <button
+                            type="button"
+                            className={`btn-editor-cli-params ${!cursorTriadReady ? 'btn-editor-cli-params--needs-attention' : ''}`}
+                            onClick={() => setCliParamsModalOpen(true)}
+                            aria-label="CLI 入参配置"
+                            title={
+                              !cursorTriadReady
+                                ? cursorWorkbenchReadinessHint || '打开 CLI 入参配置'
+                                : 'CLI 入参配置'
+                            }
+                          >
+                            <IconCliParams />
+                            <span className="btn-editor-cli-params-text">入参</span>
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="btn-editor-secondary"
                           disabled={
                             copyBusy || (isCursorCli && !cursorTriadReady)
+                          }
+                          title={
+                            isCursorCli && !cursorTriadReady
+                              ? cursorWorkbenchReadinessHint ||
+                                '请补全「入参」中的模型、工作空间等'
+                              : undefined
                           }
                           onClick={copyCliCommandOnly}
                         >
@@ -1892,6 +2412,12 @@ export default function HomePage() {
                             !`${editorContent}${partialText || ''}`.trim() ||
                             (isCursorCli && !cursorTriadReady)
                           }
+                          title={
+                            isCursorCli && !cursorTriadReady
+                              ? cursorWorkbenchReadinessHint ||
+                                '请补全「入参」中的模型、工作空间等'
+                              : undefined
+                          }
                           onClick={submitCliPrimary}
                         >
                           {copyBusy ? '…' : '发送'}
@@ -1902,22 +2428,22 @@ export default function HomePage() {
                         type="button"
                         className="btn-editor-primary"
                         disabled={
-                          httpSending || !`${editorContent}${partialText || ''}`.trim()
+                          httpSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
                         }
                         onClick={submitHttpPrimary}
                       >
-                        {httpSending ? '…' : '发送请求'}
+                        {httpSendingCurrent ? '…' : '发送请求'}
                       </button>
                     ) : (
                       <button
                         type="button"
                         className="btn-editor-primary"
                         disabled={
-                          agentSending || !`${editorContent}${partialText || ''}`.trim()
+                          agentSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
                         }
                         onClick={submitAgentPrimary}
                       >
-                        {agentSending ? '…' : '发送'}
+                        {agentSendingCurrent ? '…' : '发送'}
                       </button>
                     )}
                   </div>
@@ -1928,16 +2454,104 @@ export default function HomePage() {
         </div>
 
         {isAgent ? (
-          <aside className="agent-panel" aria-label="对话">
-            <div className="agent-panel-head">
-              <span className="agent-panel-title">对话（已存库）</span>
-              <div className="agent-panel-head-actions">
-                <button type="button" className="btn-agent-clear-chat" onClick={startNewAgentThread}>
-                  新对话
-                </button>
-                <button type="button" className="btn-agent-clear-chat" onClick={clearAgentChat}>
-                  清空消息
-                </button>
+          <aside className="agent-panel agent-panel--cursor-workbench" aria-label="对话">
+            <div className="cursor-workbench-top">
+              <div className="cursor-workbench-toolbar" aria-label="会话操作">
+                <div className="cursor-workbench-toolbar-left">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar"
+                    disabled={phase !== 'idle'}
+                    onClick={onNewAsrSession}
+                  >
+                    新建会话
+                  </button>
+                  <select
+                    key={`agent-${workbenchSessionAttachSelectKey}`}
+                    className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar"
+                    aria-label="打开已有会话到新标签"
+                    value=""
+                    disabled={phase !== 'idle'}
+                    onFocus={() => {
+                      if (phase !== 'idle' || workspacePickLoading) return;
+                      loadWorkspacePickSessions();
+                    }}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (v) {
+                        assignAsrSession(v);
+                        setWorkbenchSessionAttachSelectKey((n) => n + 1);
+                        setStatus('已选择已有会话，对话与段落将归入该会话');
+                      }
+                    }}
+                    title={workspacePickErr || undefined}
+                  >
+                    <option value="">已有会话…</option>
+                    {workspacePickOptions.map((s) => {
+                      const id = String(s.id ?? '');
+                      return (
+                        <option key={id} value={id}>
+                          {formatWorkbenchSessionLabel(s)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="cursor-workbench-toolbar-right">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost"
+                    onClick={clearAgentChat}
+                  >
+                    清空消息
+                  </button>
+                </div>
+              </div>
+              <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
+                <div
+                  className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
+                >
+                  {workbenchSplitTabIds.length === 0 ? (
+                    <p className="cursor-workbench-strip-meta">暂无会话</p>
+                  ) : (
+                    workbenchSplitTabIds.map((tid) => {
+                      const active = String(asrSessionId || '') === String(tid);
+                      return (
+                        <div
+                          key={tid}
+                          className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
+                          role="none"
+                        >
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            className="cursor-workbench-tab-main"
+                            title={formatWorkbenchSessionLabel(
+                              workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                                id: tid,
+                              }
+                            )}
+                            onClick={() => assignAsrSession(tid)}
+                          >
+                            {getCursorTabTitle(tid)}
+                          </button>
+                          <button
+                            type="button"
+                            className="cursor-workbench-tab-close"
+                            aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void closeCursorWorkbenchTab(tid);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
             <div className="agent-messages" ref={agentMessagesRef}>
@@ -1965,34 +2579,138 @@ export default function HomePage() {
             </div>
           </aside>
         ) : isCursorCli ? (
-          <aside className="agent-panel" aria-label="Cursor 对话">
-            <div className="agent-panel-head">
-              <span className="agent-panel-title">对话（Cursor）</span>
-              <div className="agent-panel-head-actions">
-                <button
-                  type="button"
-                  className="btn-agent-clear-chat"
-                  onClick={() => {
-                    setCursorTailInfo('');
-                    setCursorTailError('');
-                    setCursorPendingUserPrompt(null);
-                  }}
+          <aside className="agent-panel agent-panel--cursor-workbench" aria-label="对话">
+            <div className="cursor-workbench-top">
+              <div className="cursor-workbench-toolbar" aria-label="会话操作">
+                <div className="cursor-workbench-toolbar-left">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar"
+                    disabled={phase !== 'idle'}
+                    onClick={onNewAsrSession}
+                  >
+                    新建会话
+                  </button>
+                  <select
+                    key={workbenchSessionAttachSelectKey}
+                    className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar"
+                    aria-label="打开已有会话到新标签"
+                    value=""
+                    disabled={phase !== 'idle'}
+                    onFocus={() => {
+                      if (phase !== 'idle' || workspacePickLoading) return;
+                      loadWorkspacePickSessions();
+                    }}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (v) {
+                        assignAsrSession(v);
+                        setWorkbenchSessionAttachSelectKey((n) => n + 1);
+                        setStatus('已选择已有会话，段落将写入该会话');
+                      }
+                    }}
+                    title={workspacePickErr || undefined}
+                  >
+                    <option value="">已有会话…</option>
+                    {workspacePickOptions.map((s) => {
+                      const id = String(s.id ?? '');
+                      return (
+                        <option key={id} value={id}>
+                          {formatWorkbenchSessionLabel(s)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="cursor-workbench-toolbar-right">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost"
+                    onClick={() => setCliParamsModalOpen(true)}
+                    aria-label="CLI 入参与环境变量"
+                  >
+                    CLI 入参
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost"
+                    onClick={() => {
+                      setCursorTailInfo('');
+                      setCursorTailError('');
+                      setCursorPendingUserPrompt(null);
+                      setCursorStreamLoading(false);
+                      setCursorAwaitingCliPaste(false);
+                      const sid =
+                        asrSessionId && SESSION_UUID_RE.test(String(asrSessionId))
+                          ? String(asrSessionId)
+                          : null;
+                      if (sid) {
+                        cursorTabOutputCacheRef.current.set(sid, {
+                          tailInfo: '',
+                          tailError: '',
+                          pending: null,
+                        });
+                      }
+                    }}
+                  >
+                    清空输出
+                  </button>
+                </div>
+              </div>
+              <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
+                <div
+                  className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
                 >
-                  清空
-                </button>
+                  {workbenchSplitTabIds.length === 0 ? (
+                    <p className="cursor-workbench-strip-meta">暂无会话</p>
+                  ) : (
+                    workbenchSplitTabIds.map((tid) => {
+                      const active = String(asrSessionId || '') === String(tid);
+                      return (
+                        <div
+                          key={tid}
+                          className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
+                          role="none"
+                        >
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            className="cursor-workbench-tab-main"
+                            title={formatWorkbenchSessionLabel(
+                              workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                                id: tid,
+                              }
+                            )}
+                            onClick={() => assignAsrSession(tid)}
+                          >
+                            {getCursorTabTitle(tid)}
+                          </button>
+                          <button
+                            type="button"
+                            className="cursor-workbench-tab-close"
+                            aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void closeCursorWorkbenchTab(tid);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
-            {!asrSessionId ||
-            !SESSION_UUID_RE.test(String(asrSessionId)) ||
-            cursorEnsureStatus === 'loading' ||
-            cursorEnsureStatus === 'error' ? (
+            {asrSessionId &&
+            SESSION_UUID_RE.test(String(asrSessionId)) &&
+            !cursorQuietPrepare &&
+            (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
               <div className="cursor-external-thread-panel">
-                {!asrSessionId || !SESSION_UUID_RE.test(String(asrSessionId)) ? (
-                  <p className="sessions-muted">
-                    选择或新建工作会话后，将自动关联 Cursor 对话（复制/发送指令时会带上 --resume）。
-                  </p>
-                ) : cursorEnsureStatus === 'loading' ? (
-                  <p className="cursor-external-thread-status">正在关联 Cursor 对话…</p>
+                {cursorEnsureStatus === 'loading' ? (
+                  <p className="cursor-external-thread-status">正在准备…</p>
                 ) : (
                   <div className="cursor-external-thread-error-block">
                     <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
@@ -2018,6 +2736,16 @@ export default function HomePage() {
                     <div className="agent-bubble agent-bubble--user">
                       <div className="agent-bubble-role">你</div>
                       <div className="agent-bubble-text">{cursorPendingUserPrompt}</div>
+                    </div>
+                  ) : null}
+                  {cursorStreamLoading ? (
+                    <div
+                      className={`cursor-stream-loading${cursorAwaitingCliPaste ? ' cursor-stream-loading--prepare' : ''}`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="cursor-stream-loading-pulse" aria-hidden />
+                      {cursorAwaitingCliPaste ? '正在准备…' : '等待输出…'}
                     </div>
                   ) : null}
                   {String(cursorTailInfo).trim() || String(cursorTailError).trim() ? (
@@ -2052,17 +2780,68 @@ export default function HomePage() {
               <div className="cli-params-modal-body">
                 {cursorWorkbenchTriadLabels.length === 0 ? (
                   <p className="cli-params-cursor-empty">
-                    当前指令模板里没有 <code>&lt;模型&gt;</code>、<code>&lt;工作空间&gt;</code>、
-                    <code>&lt;输出路径&gt;</code> 占位，无需在此填写；<code>--resume</code> 由工作台在复制/发送时自动追加（需已绑定会话并完成关联）。
+                    当前模板里没有 <code>&lt;模型&gt;</code>、<code>&lt;工作空间&gt;</code>、
+                    <code>&lt;输出路径&gt;</code> 占位，无需在此填写。
                   </p>
                 ) : (
                   cursorWorkbenchTriadLabels.map((lab) => {
                     const meta =
                       lab === '模型'
-                        ? { title: '--model（模型名）', ph: '例如 grok-code、sonnet-4 等' }
+                        ? { title: '--model（CLI 模型 id）', ph: '与 `agent models` 中 id 一致' }
                         : lab === '工作空间'
-                          ? { title: '工作空间（编程目录）', ph: '/path/to/your/repo' }
+                          ? {
+                              title: '工作空间（编程目录）',
+                              ph: cliWorkspaceFallbackStr.trim()
+                                ? `未填目标路径时用服务端：${cliWorkspaceFallbackStr}`
+                                : '/path/to/your/repo',
+                            }
                           : { title: '输出路径（模板自定义）', ph: '按您在目标详情中的占位含义填写' };
+                    if (lab === '模型') {
+                      const raw = cursorTriadInputs[lab] || '';
+                      const sel = cursorAgentModelSelectValue(raw);
+                      return (
+                        <div key={lab} className="cli-mode-label cli-mode-label--stack">
+                          <span className="cli-mode-label-text">{meta.title}</span>
+                          <select
+                            className="cli-mode-workspace cli-mode-workspace--select"
+                            value={sel}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === CURSOR_AGENT_MODEL_SELECT_OTHER) {
+                                patchCursorTriadField(
+                                  lab,
+                                  sel === CURSOR_AGENT_MODEL_SELECT_OTHER ? raw : ''
+                                );
+                              } else {
+                                patchCursorTriadField(lab, v);
+                              }
+                            }}
+                            aria-label={meta.title}
+                          >
+                            <option value="">请选择模型…</option>
+                            {CURSOR_AGENT_MODEL_PRESETS.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.label}（{p.id}）
+                              </option>
+                            ))}
+                            <option value={CURSOR_AGENT_MODEL_SELECT_OTHER}>
+                              其他（手动输入 id）
+                            </option>
+                          </select>
+                          {sel === CURSOR_AGENT_MODEL_SELECT_OTHER ? (
+                            <input
+                              type="text"
+                              className="cli-mode-workspace cli-mode-workspace--triad-other"
+                              value={raw}
+                              onChange={(e) => patchCursorTriadField(lab, e.target.value)}
+                              placeholder={meta.ph}
+                              spellCheck={false}
+                              aria-label={`${meta.title} 自定义`}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    }
                     return (
                       <label key={lab} className="cli-mode-label">
                         {meta.title}
@@ -2119,12 +2898,29 @@ export default function HomePage() {
                     className="cli-mode-workspace"
                     value={activeMode.cliWorkspace || ''}
                     onChange={(e) => onCliWorkspaceChange(e.target.value)}
-                    placeholder="/path/to/project"
+                    placeholder={
+                      cliWorkspaceFallbackStr.trim()
+                        ? `未填时用服务端：${cliWorkspaceFallbackStr}`
+                        : '/path/to/project'
+                    }
                     spellCheck={false}
                   />
                 </label>
               </div>
             )}
+            <div className="cli-params-section-env">
+              <h3 className="cli-params-subtitle">环境变量（可选）</h3>
+              <p className="cli-params-modal-env-note">
+                在「目标管理」中也可编辑；此处方便与 CLI 模板一并调整。
+              </p>
+              <CliEnvEditor
+                value={normalizeCliEnvRecord(activeMode?.cliEnv)}
+                onChange={(v) => {
+                  if (!activeMode?.id) return;
+                  setModes(updateCliModeFields(activeMode.id, { cliEnv: v }));
+                }}
+              />
+            </div>
             <div className="modal-actions">
               <button type="button" className="btn-primary-nav" onClick={() => setCliParamsModalOpen(false)}>
                 完成

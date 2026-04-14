@@ -11,7 +11,7 @@ import {
   resetModelProvidersCatalog,
   setDefaultModelIds,
   updateProvider,
-} from '../stores/modelProvidersStore.js';
+} from '../stores/modelProvidersStore';
 import '../App.css';
 
 export default function ModelProvidersPage() {

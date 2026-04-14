@@ -10,6 +10,7 @@ import {
   listSessions,
 } from '~/services/sessionService.ts';
 import { ensureSessionExternalThreadWithAgentCreateChat } from '~/services/cursorAgentEnsure.ts';
+import { parseCliEnvPayload } from '~/utils/cliEnvMerge.ts';
 import {
   deleteSessionExternalThread,
   listSessionExternalThreads,
@@ -145,10 +146,12 @@ export function createSessionsRouter(db: AppDb | null): Router {
       return res.status(503).json({ error: 'Database not configured' });
     }
     try {
+      const cliEnv = parseCliEnvPayload(req.body?.cliEnv);
       const out = await ensureSessionExternalThreadWithAgentCreateChat(
         db,
         req.params.sessionId,
-        req.params.provider
+        req.params.provider,
+        Object.keys(cliEnv).length > 0 ? { cliEnv } : undefined
       );
       return res.json(out);
     } catch (e) {

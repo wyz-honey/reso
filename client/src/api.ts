@@ -1,3 +1,5 @@
+import { CURSOR_EXTERNAL_THREAD_PROVIDER } from './outputCatalog';
+
 async function parseJson(r: Response): Promise<Record<string, unknown>> {
   return r.json().catch(() => ({})) as Promise<Record<string, unknown>>;
 }
@@ -19,6 +21,28 @@ function normalizeSessionListItem(row: Record<string, unknown>): Record<string, 
     ...row,
     paragraph_count: normalizeParagraphCount(pc),
   };
+}
+
+/**
+ * 服务端 meta：cwd（或 RESO_DEFAULT_WORKSPACE）、externalThreadProvider（或 RESO_EXTERNAL_THREAD_PROVIDER）。
+ */
+export async function fetchServerMeta(): Promise<{
+  cwd: string;
+  externalThreadProvider: string;
+} | null> {
+  try {
+    const r = await fetch('/api/meta');
+    const data = await parseJson(r);
+    if (!r.ok) return null;
+    const cwd = typeof data.cwd === 'string' ? data.cwd.trim() : '';
+    const externalThreadProvider =
+      typeof data.externalThreadProvider === 'string' && data.externalThreadProvider.trim()
+        ? String(data.externalThreadProvider).trim()
+        : CURSOR_EXTERNAL_THREAD_PROVIDER;
+    return { cwd, externalThreadProvider };
+  } catch {
+    return null;
+  }
 }
 
 export async function apiCreateSession(): Promise<string> {
@@ -88,15 +112,39 @@ export async function apiDeleteSessionExternalThread(sessionId: string, provider
   if (!r.ok) throw new Error(String(data.error || `清除外部 CLI 映射失败 (${r.status})`));
 }
 
-/** POST …/ensure：有映射则复用，否则本机执行 agent create-chat 并落库 */
+/** 检测 Reso 服务端是否已为这些变量名设置非空值（不返回具体值） */
+export async function apiMetaCliEnvPresence(names: string[]): Promise<Record<string, boolean>> {
+  const uniq = [...new Set(names.map((n) => String(n || '').trim()).filter(Boolean))].slice(0, 64);
+  if (uniq.length === 0) return {};
+  const r = await fetch('/api/meta/cli-env-presence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names: uniq }),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `检测环境变量失败 (${r.status})`));
+  const p = data.presence;
+  return p && typeof p === 'object' && !Array.isArray(p) ? (p as Record<string, boolean>) : {};
+}
+
+/** POST …/ensure：有映射则复用，否则本机执行 agent create-chat 并落库；可选 cliEnv 填补服务端未设置的键 */
 export async function apiEnsureSessionExternalThread(
   sessionId: string,
-  provider: string
+  provider: string,
+  options?: { cliEnv?: Record<string, string> }
 ): Promise<{ threadId: string; created: boolean }> {
   const sid = String(sessionId || '').trim();
+  const body: Record<string, unknown> = {};
+  if (options?.cliEnv && Object.keys(options.cliEnv).length > 0) {
+    body.cliEnv = options.cliEnv;
+  }
   const r = await fetch(
     `/api/sessions/${encodeURIComponent(sid)}/external-threads/${encodeURIComponent(provider)}/ensure`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
   );
   const data = await parseJson(r);
   if (!r.ok) {

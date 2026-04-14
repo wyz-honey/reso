@@ -1,7 +1,15 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { listAllOutputs, saveBuiltinOutputOverride } from '../outputCatalog.js';
+import OutputVoiceControlSection from '../components/OutputVoiceControlSection';
+import {
+  parseOutputVoiceControl,
+  serializeOutputVoiceControl,
+  type OutputVoiceControl,
+} from '../outputVoiceControl';
+import CliEnvEditor from '../components/CliEnvEditor';
+import { mergeTargetEnvLayers, normalizeCliEnvRecord } from '../cliEnv';
+import { listAllOutputs, saveBuiltinOutputOverride } from '../outputCatalog';
 import {
   getResoAgentBinding,
   listModelsForProviderAndCategory,
@@ -9,9 +17,9 @@ import {
   MODEL_CATEGORIES,
   saveResoAgentBinding,
   useModelProvidersStore,
-} from '../stores/modelProvidersStore.js';
-import { useOutputRevisionStore } from '../stores/outputRevisionStore.js';
-import { getBuiltinAgentDefaultPrompt, saveBuiltinAgentPrompt } from '../workModes.js';
+} from '../stores/modelProvidersStore';
+import { useOutputRevisionStore } from '../stores/outputRevisionStore';
+import { getBuiltinAgentDefaultPrompt, saveBuiltinAgentPrompt } from '../workModes';
 import '../App.css';
 
 const BUILTIN_AGENT_ID = 'builtin-agent';
@@ -52,6 +60,10 @@ export default function ResoAgentPage() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [resoProviderId, setResoProviderId] = useState('');
   const [resoChatModelId, setResoChatModelId] = useState('');
+  const [voiceControl, setVoiceControl] = useState<OutputVoiceControl>(() =>
+    parseOutputVoiceControl(undefined, 'agent_chat')
+  );
+  const [targetEnv, setTargetEnv] = useState<Record<string, string>>({});
 
   const refreshBinding = useCallback(() => {
     const row = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_AGENT_ID) as
@@ -64,6 +76,18 @@ export default function ResoAgentPage() {
       setOutputShape(String(row.outputShape ?? ''));
     }
     setSystemPrompt(getBuiltinAgentDefaultPrompt());
+    const full = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_AGENT_ID) as
+      | Record<string, unknown>
+      | undefined;
+    const ext =
+      full?.extensions && typeof full.extensions === 'object' && !Array.isArray(full.extensions)
+        ? (full.extensions as Record<string, unknown>)
+        : {};
+    setVoiceControl(parseOutputVoiceControl(ext.voiceControl, 'agent_chat'));
+    setTargetEnv(
+      mergeTargetEnvLayers(ext.cliEnv, ext.environment, full?.environment as Record<string, unknown>)
+    );
+
     const mp = loadModelProviderState();
     const ra = getResoAgentBinding();
     const pid = ra.providerId || mp.providers[0]?.id || '';
@@ -94,11 +118,18 @@ export default function ResoAgentPage() {
     e.preventDefault();
     setErr('');
     try {
+      const envNorm = normalizeCliEnvRecord(targetEnv);
       saveBuiltinOutputOverride(BUILTIN_AGENT_ID, {
         name: name.trim(),
         description,
         requestUrl,
         outputShape,
+        environment: envNorm,
+        extensions: {
+          voiceControl: serializeOutputVoiceControl(voiceControl),
+          environment: envNorm,
+          cliEnv: envNorm,
+        },
       });
       saveBuiltinAgentPrompt(systemPrompt);
       saveResoAgentBinding({
@@ -242,6 +273,20 @@ export default function ResoAgentPage() {
             <legend>工具与技能</legend>
             <p className="sessions-muted">即将到来：挂载工具、Agent Skills 等；当前不可用。</p>
           </fieldset>
+
+          <section className="settings-category">
+            <h2 className="settings-section-title">环境变量（可选）</h2>
+            <p className="settings-category-lead">
+              保存在本目标上，供后续 HTTP/CLI 扩展或与网关约定使用；当前对话 API 未自动注入，可不填。
+            </p>
+            <CliEnvEditor value={targetEnv} onChange={setTargetEnv} lead={null} />
+          </section>
+
+          <OutputVoiceControlSection
+            value={voiceControl}
+            onChange={setVoiceControl}
+            lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
+          />
 
           <div className="settings-actions">
             <button type="submit" className="btn-primary-nav">
