@@ -8,6 +8,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -41,12 +42,21 @@ export const sessionExternalThreads = pgTable(
   })
 );
 
-export const chatThreads = pgTable('chat_threads', {
-  id: uuid('id').primaryKey(),
-  modeId: text('mode_id').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const chatThreads = pgTable(
+  'chat_threads',
+  {
+    id: uuid('id').primaryKey(),
+    modeId: text('mode_id').notNull(),
+    /** 绑定 RESO 会话时：同一 (mode_id, session_id) 仅一条线程（如 Cursor CLI 工作台对话落库） */
+    sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    modeSessionUniq: uniqueIndex('idx_chat_threads_mode_session').on(t.modeId, t.sessionId),
+    sessionIdx: index('idx_chat_threads_session_id').on(t.sessionId),
+  })
+);
 
 export const chatMessages = pgTable('chat_messages', {
   id: uuid('id').primaryKey(),

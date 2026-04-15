@@ -7,6 +7,7 @@ import {
   serializeOutputVoiceControl,
   type OutputVoiceControl,
 } from '../outputVoiceControl';
+import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
   listAllOutputs,
@@ -286,7 +287,7 @@ export default function OutputDetailPage() {
     return () => window.removeEventListener('reso-outputs-changed', fn);
   }, [bump]);
 
-  if (outputId === 'builtin-agent') {
+  if (outputId === BUILTIN_OUTPUT_ID.AGENT) {
     return <ResoAgentPage />;
   }
 
@@ -305,7 +306,7 @@ export default function OutputDetailPage() {
     );
   }
 
-  if (row.id === 'builtin-asr') {
+  if (row.id === BUILTIN_OUTPUT_ID.ASR) {
     return <AsrBuiltinDetail key={`${row.id}-${tick}`} row={row} onSaved={bump} />;
   }
 

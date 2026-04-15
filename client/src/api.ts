@@ -1,4 +1,4 @@
-import { CURSOR_EXTERNAL_THREAD_PROVIDER } from './outputCatalog';
+import { CURSOR_EXTERNAL_THREAD_PROVIDER } from './constants/builtins';
 
 async function parseJson(r: Response): Promise<Record<string, unknown>> {
   return r.json().catch(() => ({})) as Promise<Record<string, unknown>>;
@@ -58,6 +58,99 @@ export async function fetchCursorSessionPaths(sessionId: string) {
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `解析 Cursor 输出路径失败 (${r.status})`));
   return data;
+}
+
+/** 在服务端以 shell 子进程执行 Cursor CLI 命令（与剪贴板内容一致） */
+export async function apiCursorRun(
+  sessionId: string,
+  command: string,
+  options?: { cliEnv?: Record<string, string> }
+): Promise<{ pid: number }> {
+  const sid = String(sessionId || '').trim();
+  const body: Record<string, unknown> = { sessionId: sid, command: String(command ?? '') };
+  if (options?.cliEnv && Object.keys(options.cliEnv).length > 0) {
+    body.cliEnv = options.cliEnv;
+  }
+  const r = await fetch('/api/cursor/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) {
+    throw new Error(String(data.error || `启动 Cursor 子进程失败 (${r.status})`));
+  }
+  const pid = typeof data.pid === 'number' ? data.pid : 0;
+  return { pid };
+}
+
+/** 终止该会话在服务端运行的 Cursor CLI 子进程（含进程组，POSIX） */
+export async function apiCursorStop(sessionId: string): Promise<void> {
+  const sid = String(sessionId || '').trim();
+  await fetch('/api/cursor/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId: sid }),
+  });
+}
+
+/** Cursor CLI 工作台：数据库中的对话历史（与 outputs/cursor/.../info.txt 并行） */
+export type CliWorkbenchChatRow = { id?: string; role: string; content: string };
+
+export async function fetchCliWorkbenchChat(
+  sessionId: string,
+  modeId: string
+): Promise<{ messages: CliWorkbenchChatRow[] }> {
+  const sid = String(sessionId || '').trim();
+  const mid = String(modeId || '').trim();
+  const q = new URLSearchParams({ modeId: mid });
+  const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/cli-workbench-chat?${q}`);
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载工作台对话失败 (${r.status})`));
+  const messages = data.messages;
+  return {
+    messages: Array.isArray(messages)
+      ? (messages as CliWorkbenchChatRow[]).filter(
+          (m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string'
+        )
+      : [],
+  };
+}
+
+export async function apiAppendCliWorkbenchChatMessage(
+  sessionId: string,
+  modeId: string,
+  role: 'user' | 'assistant',
+  content: string
+): Promise<{ threadId: string; messageId: string }> {
+  const sid = String(sessionId || '').trim();
+  const mid = String(modeId || '').trim();
+  const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}/cli-workbench-chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modeId: mid, role, content: String(content ?? '') }),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `写入工作台对话失败 (${r.status})`));
+  return {
+    threadId: String(data.threadId || ''),
+    messageId: String(data.messageId || ''),
+  };
+}
+
+export async function fetchCursorRunStatus(
+  sessionId: string
+): Promise<{ running: boolean; pid: number | null }> {
+  const sid = String(sessionId || '').trim();
+  const r = await fetch(`/api/cursor/run-status?sessionId=${encodeURIComponent(sid)}`);
+  const data = await parseJson(r);
+  if (!r.ok) {
+    throw new Error(String(data.error || `查询子进程状态失败 (${r.status})`));
+  }
+  return {
+    running: Boolean(data.running),
+    pid: typeof data.pid === 'number' ? data.pid : null,
+  };
 }
 
 export type SessionExternalThreadRow = {

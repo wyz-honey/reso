@@ -19,10 +19,9 @@ import {
   useModelProvidersStore,
 } from '../stores/modelProvidersStore';
 import { useOutputRevisionStore } from '../stores/outputRevisionStore';
+import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import { getBuiltinAgentDefaultPrompt, saveBuiltinAgentPrompt } from '../workModes';
 import '../App.css';
-
-const BUILTIN_AGENT_ID = 'builtin-agent';
 
 type CatalogRow = {
   id: string;
@@ -66,7 +65,7 @@ export default function ResoAgentPage() {
   const [targetEnv, setTargetEnv] = useState<Record<string, string>>({});
 
   const refreshBinding = useCallback(() => {
-    const row = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_AGENT_ID) as
+    const row = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_OUTPUT_ID.AGENT) as
       | CatalogRow
       | undefined;
     if (row) {
@@ -76,7 +75,7 @@ export default function ResoAgentPage() {
       setOutputShape(String(row.outputShape ?? ''));
     }
     setSystemPrompt(getBuiltinAgentDefaultPrompt());
-    const full = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_AGENT_ID) as
+    const full = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_OUTPUT_ID.AGENT) as
       | Record<string, unknown>
       | undefined;
     const ext =
@@ -108,7 +107,7 @@ export default function ResoAgentPage() {
 
   const row = useMemo(
     () =>
-      listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_AGENT_ID) as CatalogRow | undefined,
+      listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_OUTPUT_ID.AGENT) as CatalogRow | undefined,
     [outputRevision]
   );
   const chatOptions = listModelsForProviderAndCategory(resoProviderId, MODEL_CATEGORIES.chat);
@@ -119,7 +118,7 @@ export default function ResoAgentPage() {
     setErr('');
     try {
       const envNorm = normalizeCliEnvRecord(targetEnv);
-      saveBuiltinOutputOverride(BUILTIN_AGENT_ID, {
+      saveBuiltinOutputOverride(BUILTIN_OUTPUT_ID.AGENT, {
         name: name.trim(),
         description,
         requestUrl,

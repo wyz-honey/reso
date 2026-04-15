@@ -1,4 +1,5 @@
 import { mergeTargetEnvLayers, normalizeCliEnvRecord } from './cliEnv';
+import { BUILTIN_OUTPUT_ID } from './constants/builtins';
 import { mergeAngleSlotsWithDefaults } from './cliSubstitute';
 import {
   addCustomOutput,
@@ -93,7 +94,7 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         voiceControl,
       };
     case 'agent_chat': {
-      if (o.builtin && o.id === 'builtin-agent') {
+      if (o.builtin && o.id === BUILTIN_OUTPUT_ID.AGENT) {
         return {
           id: o.id,
           name: o.name,
@@ -550,13 +551,13 @@ export function loadActiveModeId(): string {
     const all = getAllModes();
     let stored = localStorage.getItem(STORAGE_ACTIVE);
     if (stored === 'builtin-cli') {
-      stored = 'builtin-asr';
+      stored = BUILTIN_OUTPUT_ID.ASR;
       localStorage.setItem(STORAGE_ACTIVE, stored);
     }
     if (stored && all.some((m) => String(m.id) === stored)) return stored;
-    return String(all[0]?.id || 'builtin-asr');
+    return String(all[0]?.id || BUILTIN_OUTPUT_ID.ASR);
   } catch {
-    return 'builtin-asr';
+    return BUILTIN_OUTPUT_ID.ASR;
   }
 }
 

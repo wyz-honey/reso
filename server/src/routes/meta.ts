@@ -1,7 +1,6 @@
 import { Router } from 'express';
+import { CURSOR_EXTERNAL_THREAD_PROVIDER } from '~/constants/cursorWorkbench.ts';
 import { envPresenceMap } from '~/utils/cliEnvMerge.ts';
-
-const DEFAULT_CURSOR_THREAD_PROVIDER = 'cursor_agent';
 
 /**
  * 浏览器工作台用：未配置 CLI 工作区时，可用此处作为默认（Node 启动时的 cwd）。
@@ -14,7 +13,7 @@ export function createMetaRouter(): Router {
     const override = process.env.RESO_DEFAULT_WORKSPACE?.trim();
     const cwd = override || process.cwd();
     const externalThreadProvider =
-      process.env.RESO_EXTERNAL_THREAD_PROVIDER?.trim() || DEFAULT_CURSOR_THREAD_PROVIDER;
+      process.env.RESO_EXTERNAL_THREAD_PROVIDER?.trim() || CURSOR_EXTERNAL_THREAD_PROVIDER;
     res.json({ cwd, externalThreadProvider });
   });
 

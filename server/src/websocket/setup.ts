@@ -1,12 +1,17 @@
 import type { Server } from 'http';
 import fs from 'fs';
 import { WebSocketServer } from 'ws';
-import { connectDashScope } from '~/services/asrBridge.ts';
+import { connectDashScope, resolveAsrModel } from '~/services/asrBridge.ts';
+import { connectQwenAsrRealtime, isQwenAsrRealtimeModel } from '~/services/qwenAsrRealtimeBridge.ts';
 import { resolveDashscopeApiKey } from '~/services/dashscopeChat.ts';
 import {
   ensureCursorSessionOutputDir,
   readCursorSessionFilesSync,
 } from '~/services/cursorPaths.ts';
+import {
+  CURSOR_TAIL_WS_DEBOUNCE_MS,
+  CURSOR_TAIL_WS_POLL_INTERVAL_MS,
+} from '~/constants/cursorWorkbench.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 
 function upgradePathname(url: string | undefined): string {
@@ -43,7 +48,8 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
   });
 
   wss.on('connection', (clientWs) => {
-    let upstreamAsr: ReturnType<typeof connectDashScope> | null = null;
+    let upstreamAsr: ReturnType<typeof connectDashScope> | ReturnType<typeof connectQwenAsrRealtime> | null =
+      null;
 
     const safeSend = (obj: unknown) => {
       if (clientWs.readyState === WebSocket.OPEN) {
@@ -90,7 +96,8 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
           });
           return;
         }
-        const asrModel = typeof cmd.asrModel === 'string' ? cmd.asrModel : '';
+        const asrModelRaw = typeof cmd.asrModel === 'string' ? cmd.asrModel : '';
+        const resolvedModel = resolveAsrModel(asrModelRaw);
         const hints = Array.isArray(cmd.asrLanguageHints)
           ? cmd.asrLanguageHints.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
           : undefined;
@@ -98,48 +105,79 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
           typeof cmd.asrMaxSentenceSilenceMs === 'number' && !Number.isNaN(cmd.asrMaxSentenceSilenceMs)
             ? cmd.asrMaxSentenceSilenceMs
             : undefined;
-        upstreamAsr = connectDashScope(
-          apiKey,
-          asrModel,
-          (msg) => {
-            const header = msg.header as { event?: string; error_message?: string; message?: string } | undefined;
-            const event = header?.event;
-            if (event === 'result-generated') {
-              const payload = msg.payload as {
-                output?: { sentence?: { heartbeat?: boolean; text?: unknown; sentence_end?: boolean } };
-              };
-              const sentence = payload?.output?.sentence;
-              if (sentence?.heartbeat) return;
-              const text = sentence?.text;
-              if (text != null) {
+
+        if (isQwenAsrRealtimeModel(resolvedModel)) {
+          upstreamAsr = connectQwenAsrRealtime(
+            apiKey,
+            resolvedModel,
+            (ev) => {
+              if (ev.type === 'ready') safeSend({ type: 'ready' });
+              else if (ev.type === 'transcript') {
                 safeSend({
                   type: 'transcript',
-                  text,
-                  sentenceEnd: Boolean(sentence?.sentence_end),
+                  text: ev.text,
+                  sentenceEnd: ev.sentenceEnd,
                 });
+              } else if (ev.type === 'done') {
+                safeSend({ type: 'done' });
+                teardownUpstream();
+              } else if (ev.type === 'error') {
+                safeSend({ type: 'error', message: ev.message });
+                teardownUpstream();
               }
-            } else if (event === 'task-started') {
-              safeSend({ type: 'ready' });
-            } else if (event === 'task-finished') {
-              safeSend({ type: 'done' });
-              teardownUpstream();
-            } else if (event === 'task-failed') {
-              safeSend({
-                type: 'error',
-                message: header?.error_message || header?.message || 'task-failed',
-              });
-              teardownUpstream();
+            },
+            () => {
+              upstreamAsr = null;
+            },
+            {
+              language: hints?.[0],
+              ...(maxMs != null ? { silenceDurationMs: maxMs } : {}),
             }
-          },
-          () => {
-            upstreamAsr = null;
-          },
-          {
-            disfluencyRemovalEnabled: cmd.asrDisfluencyRemoval !== false,
-            ...(hints && hints.length ? { languageHints: hints } : {}),
-            ...(maxMs != null ? { maxSentenceSilenceMs: maxMs } : {}),
-          }
-        );
+          );
+        } else {
+          upstreamAsr = connectDashScope(
+            apiKey,
+            resolvedModel,
+            (msg) => {
+              const header = msg.header as { event?: string; error_message?: string; message?: string } | undefined;
+              const event = header?.event;
+              if (event === 'result-generated') {
+                const payload = msg.payload as {
+                  output?: { sentence?: { heartbeat?: boolean; text?: unknown; sentence_end?: boolean } };
+                };
+                const sentence = payload?.output?.sentence;
+                if (sentence?.heartbeat) return;
+                const text = sentence?.text;
+                if (text != null) {
+                  safeSend({
+                    type: 'transcript',
+                    text,
+                    sentenceEnd: Boolean(sentence?.sentence_end),
+                  });
+                }
+              } else if (event === 'task-started') {
+                safeSend({ type: 'ready' });
+              } else if (event === 'task-finished') {
+                safeSend({ type: 'done' });
+                teardownUpstream();
+              } else if (event === 'task-failed') {
+                safeSend({
+                  type: 'error',
+                  message: header?.error_message || header?.message || 'task-failed',
+                });
+                teardownUpstream();
+              }
+            },
+            () => {
+              upstreamAsr = null;
+            },
+            {
+              disfluencyRemovalEnabled: cmd.asrDisfluencyRemoval !== false,
+              ...(hints && hints.length ? { languageHints: hints } : {}),
+              ...(maxMs != null ? { maxSentenceSilenceMs: maxMs } : {}),
+            }
+          );
+        }
         return;
       }
 
@@ -220,7 +258,7 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
         debounceTimer = setTimeout(() => {
           debounceTimer = null;
           pushIfChanged();
-        }, 50);
+        }, CURSOR_TAIL_WS_DEBOUNCE_MS);
       };
 
       pushIfChanged();
@@ -235,9 +273,9 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
 
       /**
        * 目录 fs.watch 在部分环境对「仅追加写入同一文件」不触发或触发不稳定；CLI 重定向 stdout
-       * 时常为块缓冲，轮询可在 flush 间隔内把增长中的内容推到前端。
+       * 时常为块缓冲；轮询间隔见 CURSOR_TAIL_WS_POLL_INTERVAL_MS。
        */
-      pollTimer = setInterval(pushIfChanged, 300);
+      pollTimer = setInterval(pushIfChanged, CURSOR_TAIL_WS_POLL_INTERVAL_MS);
     });
 
     clientWs.on('close', stopWatch);

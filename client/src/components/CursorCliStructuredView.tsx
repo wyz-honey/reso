@@ -23,20 +23,8 @@ function BlockView({ b }: { b: CliParsedBlock }) {
   }
 
   if (b.kind === 'system') {
-    const model = typeof b.payload.model === 'string' ? b.payload.model : '';
-    const cwd = typeof b.payload.cwd === 'string' ? b.payload.cwd : '';
-    const sid = typeof b.payload.session_id === 'string' ? b.payload.session_id : '';
-    return (
-      <details className="cursor-cli-block cursor-cli-block--system" open={false}>
-        <summary className="cursor-cli-summary">系统 · 初始化</summary>
-        <div className="cursor-cli-system-meta">
-          {model ? <span>model: {model}</span> : null}
-          {cwd ? <span>cwd: {cwd}</span> : null}
-          {sid ? <span>session: {sid.slice(0, 8)}…</span> : null}
-        </div>
-        <pre className="cursor-cli-pre">{JSON.stringify(b.payload, null, 2)}</pre>
-      </details>
-    );
+    /* 解析层已跳过；兜底不向用户展示 */
+    return null;
   }
 
   if (b.kind === 'user') {

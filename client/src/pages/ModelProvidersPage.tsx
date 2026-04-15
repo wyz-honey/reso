@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
   MODEL_CATEGORY_LABELS,
   MODEL_CATEGORIES,
@@ -92,7 +93,10 @@ export default function ModelProvidersPage() {
             <p className="sessions-subtitle">
               集中管理<strong> API Key</strong>、<strong>兼容接口地址</strong>与<strong>按场景分类的模型</strong>
               （语音识别 / 对话 LLM）。标准模式识别与 RESO 对话会优先使用此处默认；也可在
-              <NavLink to="/outputs/builtin-agent" className="sessions-inline-link">
+              <NavLink
+                to={`/outputs/${BUILTIN_OUTPUT_ID.AGENT}`}
+                className="sessions-inline-link"
+              >
                 RESO 目标详情
               </NavLink>
               中覆盖对话供应商与模型。

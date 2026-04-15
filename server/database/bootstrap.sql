@@ -22,11 +22,14 @@ CREATE TABLE IF NOT EXISTS session_external_threads (
 CREATE TABLE IF NOT EXISTS chat_threads (
   id UUID PRIMARY KEY,
   mode_id TEXT NOT NULL,
+  session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_chat_threads_mode_id ON chat_threads(mode_id);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_updated ON chat_threads(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_threads_session_id ON chat_threads(session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_mode_session ON chat_threads (mode_id, session_id);
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY,

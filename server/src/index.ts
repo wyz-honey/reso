@@ -6,6 +6,7 @@ import { createDb } from '~/database/db.ts';
 import { createPool } from '~/database/pool.ts';
 import { sessions } from '~/database/schema.ts';
 import { attachWebSockets } from '~/websocket/setup.ts';
+import { stopAllCursorRuns } from '~/services/cursorRunManager.ts';
 import { PORT } from '~/config/constants.ts';
 import {
   getErrorLogFilePath,
@@ -28,6 +29,7 @@ function gracefulShutdown(signal: string): void {
   shuttingDown = true;
   void (async () => {
     try {
+      stopAllCursorRuns();
       await shutdownSockets();
       await new Promise<void>((resolve, reject) => {
         httpServer.close((err) => (err ? reject(err) : resolve()));

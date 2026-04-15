@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
+import {
+  MODEL_CATEGORY_LABELS,
+  MODEL_CATEGORIES,
+  setDefaultModelIds,
+  useModelProvidersStore,
+} from '../stores/modelProvidersStore';
 import { getVoiceSettings, saveVoiceSettings } from '../stores/voiceSettingsStore';
 import '../App.css';
 
@@ -15,6 +22,24 @@ export default function SettingsPage() {
     () => getVoiceSettings().oralStripPhrasesText
   );
   const [savedFlash, setSavedFlash] = useState(false);
+
+  /** 勿在 selector 里直接 .filter() 返回新数组，否则会每次引用不等 → 无限重渲染 */
+  const models = useModelProvidersStore((s) => s.models);
+  const speechModelId = useModelProvidersStore((s) => s.defaults.speechModelId);
+  const speechModels = useMemo(
+    () => models.filter((m) => m.category === MODEL_CATEGORIES.speech),
+    [models]
+  );
+  const speechSelectValue = useMemo(() => {
+    if (speechModels.some((m) => m.id === speechModelId)) return speechModelId;
+    return speechModels[0]?.id ?? '';
+  }, [speechModels, speechModelId]);
+
+  useEffect(() => {
+    const first = speechModels[0]?.id;
+    if (!first || speechModels.some((m) => m.id === speechModelId)) return;
+    setDefaultModelIds({ speechModelId: first });
+  }, [speechModels, speechModelId]);
 
   useEffect(() => {
     const onExt = () => {
@@ -51,7 +76,10 @@ export default function SettingsPage() {
           </NavLink>
           中进入对应目标详情配置。此处仅保留百炼识别参数与正文口语清理。
           RESO 模型与提示词在
-          <NavLink to="/outputs/builtin-agent" className="sessions-inline-link">
+          <NavLink
+              to={`/outputs/${BUILTIN_OUTPUT_ID.AGENT}`}
+              className="sessions-inline-link"
+            >
             RESO 目标详情
           </NavLink>
           ；供应商与 API Key 见
@@ -68,9 +96,31 @@ export default function SettingsPage() {
             语音识别与正文清理
           </h2>
           <p className="settings-category-lead">
-            以下选项在下次点击「开始识别」时生效。引擎侧过滤语气词依赖百炼文档中的{' '}
-            <code>disfluency_removal_enabled</code>；语种提示用 <code>language_hints</code> 提升中文等场景准确率。
+            以下选项在下次点击「开始识别」时生效（除识别模型外，其余项需点底部「保存到本机」）。<strong>Paraformer</strong>
+            走百炼推理 WS；<strong>Qwen3 ASR Flash Realtime</strong> 走 Realtime WS（服务端已桥接为相同前端协议）。引擎侧过滤语气词仅对
+            Paraformer 的 <code>disfluency_removal_enabled</code> 生效；语种提示在 Paraformer 为 <code>language_hints</code>，在
+            Qwen3 实时模型上取<strong>提示列表的第一项</strong>作为主语言（如 <code>zh</code>）。自定义识别模型与 API Key 见
+            <NavLink to="/model-providers" className="sessions-inline-link">
+              模型目录（高级）
+            </NavLink>
+            。
           </p>
+
+          <label className="settings-label">
+            {MODEL_CATEGORY_LABELS.speech}
+            <select
+              className="settings-select"
+              value={speechSelectValue}
+              onChange={(e) => setDefaultModelIds({ speechModelId: e.target.value })}
+            >
+              {speechModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}（{m.apiModelId}）
+                </option>
+              ))}
+            </select>
+            <span className="settings-hint">切换后立即生效，已写入本机模型目录中的「默认 · 语音识别」。</span>
+          </label>
 
           <label className="settings-check">
             <input

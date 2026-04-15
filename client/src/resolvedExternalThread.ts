@@ -1,4 +1,4 @@
-import { CURSOR_EXTERNAL_THREAD_PROVIDER } from './outputCatalog';
+import { CURSOR_EXTERNAL_THREAD_PROVIDER } from './constants/builtins';
 
 /**
  * 与 session_external_threads.provider 对应；默认 cursor_agent。

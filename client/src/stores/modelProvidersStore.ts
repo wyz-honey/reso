@@ -60,6 +60,27 @@ function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+const QWEN3_ASR_RT_API_ID = 'qwen3-asr-flash-realtime-2026-02-10';
+
+function ensureBuiltinQwenAsrSpeechModel(state: ModelProviderPersisted): ModelProviderPersisted {
+  if (state.models.some((m) => m.apiModelId === QWEN3_ASR_RT_API_ID)) return state;
+  const pid = state.providers[0]?.id;
+  if (!pid) return state;
+  return {
+    ...state,
+    models: [
+      ...state.models,
+      {
+        id: 'm_qwen3_asr_rt_20260210',
+        providerId: pid,
+        category: MODEL_CATEGORIES.speech,
+        apiModelId: QWEN3_ASR_RT_API_ID,
+        label: 'Qwen3 ASR Flash Realtime (2026-02-10)',
+      },
+    ],
+  };
+}
+
 export function createDefaultProviderState(): ModelProviderPersisted {
   const pid = 'pv_bailian';
   const models: ModelRecord[] = [
@@ -69,6 +90,13 @@ export function createDefaultProviderState(): ModelProviderPersisted {
       category: MODEL_CATEGORIES.speech,
       apiModelId: 'paraformer-realtime-v2',
       label: 'Paraformer 实时 v2',
+    },
+    {
+      id: 'm_qwen3_asr_rt_20260210',
+      providerId: pid,
+      category: MODEL_CATEGORIES.speech,
+      apiModelId: QWEN3_ASR_RT_API_ID,
+      label: 'Qwen3 ASR Flash Realtime (2026-02-10)',
     },
     ...CHAT_PRESETS.map((c, i) => ({
       id: `m_qwen_${i}`,
@@ -91,7 +119,7 @@ export function createDefaultProviderState(): ModelProviderPersisted {
     ],
     models,
     defaults: {
-      speechModelId: 'm_paraformer_rt',
+      speechModelId: 'm_qwen3_asr_rt_20260210',
       chatModelId: 'm_qwen_0',
     },
     resoAgent: {
@@ -109,12 +137,12 @@ function migrate(raw: unknown): ModelProviderPersisted {
   }
   const ra = o.resoAgent as Record<string, unknown> | undefined;
   const d = o.defaults as Record<string, unknown> | undefined;
-  return {
+  const base: ModelProviderPersisted = {
     version: 1,
     providers: o.providers as ProviderRecord[],
     models: o.models as ModelRecord[],
     defaults: {
-      speechModelId: d?.speechModelId?.toString() || 'm_paraformer_rt',
+      speechModelId: d?.speechModelId?.toString() || 'm_qwen3_asr_rt_20260210',
       chatModelId: d?.chatModelId?.toString() || 'm_qwen_0',
     },
     resoAgent: {
@@ -122,6 +150,7 @@ function migrate(raw: unknown): ModelProviderPersisted {
       modelId: (ra?.modelId as string | null) ?? null,
     },
   };
+  return ensureBuiltinQwenAsrSpeechModel(base);
 }
 
 type Actions = {
@@ -274,7 +303,7 @@ export function getApiKeyForModelRecord(modelId: string | null | undefined): str
 export function getResolvedSpeechAsrApiModelId(): string {
   const st = loadModelProviderState();
   const m = getModelById(st.defaults.speechModelId);
-  return m?.apiModelId || 'paraformer-realtime-v2';
+  return m?.apiModelId || QWEN3_ASR_RT_API_ID;
 }
 
 export function getResolvedResoChatApiModelId(): string {

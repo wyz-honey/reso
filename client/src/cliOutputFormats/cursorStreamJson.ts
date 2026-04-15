@@ -79,6 +79,33 @@ function linePreview(obj: Record<string, unknown>): string {
   }
 }
 
+/** Cursor 内部：--resume、带 UUID 的会话续接等，不向最终用户展示 */
+export function isInternalCursorUserText(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (!t) return true;
+  if (/--resume(?:\s|=|$)/i.test(t)) return true;
+  const uuid =
+    /[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+  if (/\bresume\b/i.test(t) && uuid.test(t)) return true;
+  if (/create[-_]?chat/i.test(t) && uuid.test(t)) return true;
+  return false;
+}
+
+/** 标准错误里常见的内部提示行，侧栏不展示 */
+export function sanitizeCursorStderrForDisplay(raw: string): string {
+  return String(raw || '')
+    .split('\n')
+    .filter((line) => {
+      const l = line.trim();
+      if (!l) return false;
+      if (/--resume/i.test(l) && /[0-9a-f-]{36}/i.test(l)) return false;
+      if (/resuming session/i.test(l)) return false;
+      if (/session id/i.test(l) && /[0-9a-f-]{36}/i.test(l)) return false;
+      return true;
+    })
+    .join('\n');
+}
+
 export function looksLikeCursorStreamJson(info: string): boolean {
   const lines = String(info || '')
     .split('\n')
@@ -141,13 +168,14 @@ export function parseCursorStreamJson(info: string): ParsedCliOutput {
 
     if (type === 'system') {
       flushThinkingStreaming();
-      blocks.push({ kind: 'system', payload: { ...row } });
+      /* 不向用户展示 init 等系统事件 */
       continue;
     }
 
     if (type === 'user') {
       flushThinkingStreaming();
       const text = extractMessageText(row.message);
+      if (isInternalCursorUserText(text)) continue;
       blocks.push({ kind: 'user', text });
       continue;
     }

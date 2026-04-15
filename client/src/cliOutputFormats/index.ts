@@ -3,7 +3,12 @@ import { parsePlainCliStdout } from './plain';
 import type { ParsedCliOutput } from './types';
 
 export type { CliOutputFormatId, CliParsedBlock, CursorStreamBlock, ParsedCliOutput } from './types';
-export { looksLikeCursorStreamJson, parseCursorStreamJson } from './cursorStreamJson';
+export {
+  isInternalCursorUserText,
+  looksLikeCursorStreamJson,
+  parseCursorStreamJson,
+  sanitizeCursorStderrForDisplay,
+} from './cursorStreamJson';
 export { parsePlainCliStdout } from './plain';
 
 /**

@@ -16,8 +16,13 @@ import {
   listSessionExternalThreads,
   upsertSessionExternalThread,
 } from '~/services/sessionExternalThreadService.ts';
+import {
+  appendCliWorkbenchMessage,
+  listCliWorkbenchMessages,
+} from '~/services/cliWorkbenchChatService.ts';
 import { AppError, getErrorStatus } from '~/utils/appError.ts';
 import { serviceError } from '~/utils/logger.ts';
+import { isValidUuid } from '~/utils/validation.ts';
 
 /** 挂在根 app 上（`POST /api/sessions/batch-delete`），避免子路由挂载后部分环境下 404。 */
 export async function handleSessionsBatchDelete(
@@ -165,6 +170,62 @@ export function createSessionsRouter(db: AppDb | null): Router {
         error: 'Failed to ensure external thread',
         detail,
       });
+    }
+  });
+
+  /** Cursor CLI 工作台：按 RESO 会话 + 目标 modeId 存对话（与 info.txt 并行） */
+  r.get('/:sessionId/cli-workbench-chat', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const sessionId = req.params.sessionId;
+    const modeId = typeof req.query.modeId === 'string' ? req.query.modeId.trim() : '';
+    if (!isValidUuid(sessionId)) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+    if (!modeId) {
+      return res.status(400).json({ error: 'modeId query parameter is required' });
+    }
+    try {
+      const messages = await listCliWorkbenchMessages(db, modeId, sessionId);
+      return res.json({ messages });
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'GET /api/sessions/.../cli-workbench-chat failed', e);
+      return res.status(500).json({ error: 'Failed to load cli workbench chat' });
+    }
+  });
+
+  r.post('/:sessionId/cli-workbench-chat/messages', async (req, res) => {
+    if (!db) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const sessionId = req.params.sessionId;
+    const modeId = typeof req.body?.modeId === 'string' ? req.body.modeId.trim() : '';
+    const role = req.body?.role === 'assistant' ? 'assistant' : req.body?.role === 'user' ? 'user' : '';
+    const content = typeof req.body?.content === 'string' ? req.body.content : '';
+    if (!isValidUuid(sessionId)) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+    if (!modeId) {
+      return res.status(400).json({ error: 'modeId is required' });
+    }
+    if (role !== 'user' && role !== 'assistant') {
+      return res.status(400).json({ error: 'role must be user or assistant' });
+    }
+    try {
+      const out = await appendCliWorkbenchMessage(db, modeId, sessionId, role, content);
+      return res.json(out);
+    } catch (e) {
+      const sc = getErrorStatus(e);
+      if (sc) {
+        return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
+      }
+      serviceError('sessions', 'POST /api/sessions/.../cli-workbench-chat/messages failed', e);
+      return res.status(500).json({ error: 'Failed to append message' });
     }
   });
 

@@ -5,12 +5,10 @@
 
 import { normalizeCliEnvRecord } from './cliEnv';
 import { mergeAngleSlotsWithDefaults } from './cliSubstitute';
+import { BUILTIN_OUTPUT_ID } from './constants/builtins';
 import { useOutputRevisionStore } from './stores/outputRevisionStore';
 
 const CUSTOM_KEY = 'reso_custom_outputs_v1';
-
-/** 与 session_external_threads.provider 对应；其它 CLI（如 Qoder）可另设 provider 键 */
-export const CURSOR_EXTERNAL_THREAD_PROVIDER = 'cursor_agent';
 
 export const CURSOR_CLI_DEFAULT_TEMPLATE = `agent \\
 -p <输入> \\
@@ -137,7 +135,7 @@ export function saveBuiltinOutputOverride(
             ...patch.extensions,
           }
         : prev.extensions;
-    if (id === 'builtin-cursor' && next.extensions && typeof next.extensions === 'object') {
+    if (id === BUILTIN_OUTPUT_ID.CURSOR && next.extensions && typeof next.extensions === 'object') {
       const { externalThreadProvider: _etp, ...rest } = next.extensions as Record<string, unknown>;
       next.extensions = rest;
     }
@@ -149,7 +147,7 @@ export function saveBuiltinOutputOverride(
 export function getBuiltinOutputs() {
   return [
     {
-      id: 'builtin-asr',
+      id: BUILTIN_OUTPUT_ID.ASR,
       builtin: true,
       targetKind: TARGET_KINDS.api,
       createdAt: null,
@@ -163,7 +161,7 @@ export function getBuiltinOutputs() {
       extensions: {},
     },
     {
-      id: 'builtin-agent',
+      id: BUILTIN_OUTPUT_ID.AGENT,
       builtin: true,
       targetKind: TARGET_KINDS.agent,
       createdAt: null,
@@ -177,7 +175,7 @@ export function getBuiltinOutputs() {
       extensions: {},
     },
     {
-      id: 'builtin-cursor',
+      id: BUILTIN_OUTPUT_ID.CURSOR,
       builtin: true,
       targetKind: TARGET_KINDS.agent,
       createdAt: null,
@@ -210,7 +208,7 @@ export function getMergedBuiltinOutputs() {
         ? p.extensions
         : null;
     let extensions = patchExt ? { ...baseExt, ...patchExt } : { ...baseExt };
-    if (b.id === 'builtin-cursor' && extensions && typeof extensions === 'object') {
+    if (b.id === BUILTIN_OUTPUT_ID.CURSOR && extensions && typeof extensions === 'object') {
       const { externalThreadProvider: _e, ...rest } = extensions as Record<string, unknown>;
       extensions = rest;
     }

@@ -1,6 +1,9 @@
 export const PORT = Number(process.env.PORT) || 3002;
 
 export const DASHSCOPE_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference/';
+/** Qwen3 ASR Flash Realtime 等使用的 OpenAI-Realtime 兼容入口（新加坡请换 intl 域名） */
+export const DASHSCOPE_REALTIME_WS_BASE =
+  process.env.DASHSCOPE_REALTIME_WS_BASE || 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
 export const DEFAULT_ASR_MODEL = 'paraformer-realtime-v2';
 export const ASR_MODEL_ID_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
 

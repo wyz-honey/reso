@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
   DELIVERY_TYPE_LABELS,
   HTTP_PROTOCOL_LABELS,
@@ -174,7 +175,11 @@ export default function OutputsPage() {
   const refresh = useCallback(() => setTick((x) => x + 1), []);
 
   const openExpand = (row) => {
-    if (row.builtin && (row.id === 'builtin-asr' || row.id === 'builtin-agent')) return;
+    if (
+      row.builtin &&
+      (row.id === BUILTIN_OUTPUT_ID.ASR || row.id === BUILTIN_OUTPUT_ID.AGENT)
+    )
+      return;
     if (expandedId === row.id) {
       setExpandedId(null);
       return;
@@ -485,7 +490,7 @@ export default function OutputsPage() {
                     </div>
                   );
 
-                  if (o.builtin && o.id === 'builtin-asr') {
+                  if (o.builtin && o.id === BUILTIN_OUTPUT_ID.ASR) {
                     return (
                       <li key={o.id} className="outputs-list-item">
                         <NavLink
@@ -512,7 +517,7 @@ export default function OutputsPage() {
                     );
                   }
 
-                  if (o.builtin && o.id === 'builtin-agent') {
+                  if (o.builtin && o.id === BUILTIN_OUTPUT_ID.AGENT) {
                     return (
                       <li key={o.id} className="outputs-list-item">
                         <NavLink
@@ -539,7 +544,7 @@ export default function OutputsPage() {
                     );
                   }
 
-                  if (o.builtin && o.id === 'builtin-cursor') {
+                  if (o.builtin && o.id === BUILTIN_OUTPUT_ID.CURSOR) {
                     return (
                       <li key={o.id} className="outputs-list-item">
                         <NavLink
