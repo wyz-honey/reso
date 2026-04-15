@@ -1364,6 +1364,7 @@ export default function HomePage() {
             system: activeMode.systemPrompt || undefined,
             model,
             dashscopeApiKey,
+            sessionId: ensuredSid,
           },
           (ev) => {
             if (ev.type === 'meta' && ev.threadId) {
@@ -1391,16 +1392,18 @@ export default function HomePage() {
         setStatus(phaseRef.current === 'recording' ? '正在聆听…' : '可继续输入或说话');
         return true;
       } catch (e) {
-        setStatus(e.message || '发送失败');
-        const tid = getAgentThreadIdForSession(modeId, ensuredSid) || streamThreadId;
-        if (tid) {
-          try {
-            const data = await fetchChatThread(tid);
-            setChatByModeId((s) => ({ ...s, [chatKey]: data.messages || [] }));
-          } catch {
-            /* 保持当前列表 */
+        const msg = e instanceof Error ? e.message : '发送失败';
+        setChatByModeId((s) => {
+          const list = [...(s[chatKey] || [])];
+          const last = list[list.length - 1];
+          if (last?.role === 'assistant') {
+            list[list.length - 1] = { role: 'assistant', content: msg, error: true };
+          } else {
+            list.push({ role: 'assistant', content: msg, error: true });
           }
-        }
+          return { ...s, [chatKey]: list };
+        });
+        setStatus(phaseRef.current === 'recording' ? '正在聆听…' : '可继续输入或说话');
         return false;
       } finally {
         agentSendingKeysRef.current.delete(chatKey);
@@ -2392,23 +2395,32 @@ export default function HomePage() {
               {agentMessages.length === 0 ? (
                 <p className="agent-empty">发送第一条消息后，回复会显示在这里。</p>
               ) : (
-                agentMessages.map((m, i) => (
-                  <div
-                    key={`${i}-${m.role}-${m.content.slice(0, 12)}`}
-                    className={`agent-bubble agent-bubble--${m.role}`}
-                  >
-                    <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
+                agentMessages.map((m, i) => {
+                  const err = Boolean((m as { error?: boolean }).error);
+                  return (
                     <div
-                      className={`agent-bubble-text ${m.role === 'assistant' ? 'agent-bubble-text--md' : ''}`}
+                      key={`${workbenchActivityKey}-msg-${i}`}
+                      className={`agent-bubble agent-bubble--${m.role}${err ? ' agent-bubble--error' : ''}`}
                     >
-                      {m.role === 'assistant' ? (
-                        <AssistantMarkdown text={m.content} />
-                      ) : (
-                        m.content
-                      )}
+                      <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
+                      <div
+                        className={`agent-bubble-text ${m.role === 'assistant' && !err ? 'agent-bubble-text--md' : ''}`}
+                      >
+                        {m.role === 'assistant' ? (
+                          err ? (
+                            <div className="agent-bubble-error-body" role="alert">
+                              {m.content}
+                            </div>
+                          ) : (
+                            <AssistantMarkdown text={m.content} />
+                          )
+                        ) : (
+                          m.content
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </aside>

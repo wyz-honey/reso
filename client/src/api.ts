@@ -352,6 +352,7 @@ export async function apiAgentChatTurn(bodyIn: {
   system?: string;
   model?: string;
   dashscopeApiKey?: string;
+  sessionId?: string | null;
 }) {
   const body: Record<string, unknown> = {
     modeId: bodyIn.modeId,
@@ -360,6 +361,9 @@ export async function apiAgentChatTurn(bodyIn: {
     system: bodyIn.system,
     model: bodyIn.model || undefined,
   };
+  if (typeof bodyIn.sessionId === 'string' && bodyIn.sessionId.trim()) {
+    body.sessionId = bodyIn.sessionId.trim();
+  }
   if (typeof bodyIn.dashscopeApiKey === 'string' && bodyIn.dashscopeApiKey.trim()) {
     body.dashscopeApiKey = bodyIn.dashscopeApiKey.trim();
   }
@@ -381,6 +385,7 @@ export async function apiAgentChatTurnStream(
     system?: string;
     model?: string;
     dashscopeApiKey?: string;
+    sessionId?: string | null;
   },
   onEvent: (ev: Record<string, unknown>) => void
 ) {
@@ -391,6 +396,9 @@ export async function apiAgentChatTurnStream(
     system: bodyIn.system,
     model: bodyIn.model || undefined,
   };
+  if (typeof bodyIn.sessionId === 'string' && bodyIn.sessionId.trim()) {
+    body.sessionId = bodyIn.sessionId.trim();
+  }
   if (typeof bodyIn.dashscopeApiKey === 'string' && bodyIn.dashscopeApiKey.trim()) {
     body.dashscopeApiKey = bodyIn.dashscopeApiKey.trim();
   }

@@ -54,7 +54,10 @@ export function createAgentRouter(db: AppDb | null): Router {
       system,
       model: modelOverride,
       dashscopeApiKey,
+      sessionId: sessionIdBody,
     } = req.body || {};
+    const sessionId =
+      typeof sessionIdBody === 'string' && sessionIdBody.trim() ? sessionIdBody.trim() : undefined;
     if (!modeId || typeof modeId !== 'string') {
       return res.status(400).json({ error: 'modeId required' });
     }
@@ -71,6 +74,7 @@ export function createAgentRouter(db: AppDb | null): Router {
         system,
         modelOverride,
         dashscopeApiKey,
+        sessionId,
       });
       return res.json(out);
     } catch (e) {
@@ -94,7 +98,10 @@ export function createAgentRouter(db: AppDb | null): Router {
       system,
       model: modelOverride,
       dashscopeApiKey,
+      sessionId: sessionIdBody,
     } = req.body || {};
+    const sessionId =
+      typeof sessionIdBody === 'string' && sessionIdBody.trim() ? sessionIdBody.trim() : undefined;
     if (!modeId || typeof modeId !== 'string') {
       return res.status(400).json({ error: 'modeId required' });
     }
@@ -113,6 +120,7 @@ export function createAgentRouter(db: AppDb | null): Router {
         threadId: incomingThreadId,
         userText: text,
         system,
+        sessionId,
       });
 
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -144,7 +152,10 @@ export function createAgentRouter(db: AppDb | null): Router {
           return res.status(sc).json({ error: e instanceof Error ? e.message : 'Error' });
         }
         serviceError('agent', 'POST /api/agent/chat-turn-stream failed (before headers)', e);
-        return res.status(500).json({ error: 'Chat stream failed' });
+        const detail = e instanceof Error ? e.message : String(e);
+        return res.status(500).json({
+          error: detail && detail !== '[object Object]' ? detail : 'Chat stream failed',
+        });
       }
       serviceError('agent', 'POST /api/agent/chat-turn-stream failed (after headers)', e);
       try {

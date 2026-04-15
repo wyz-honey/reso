@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS chat_threads (
 CREATE INDEX IF NOT EXISTS idx_chat_threads_mode_id ON chat_threads(mode_id);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_updated ON chat_threads(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_session_id ON chat_threads(session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_mode_session ON chat_threads (mode_id, session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_mode_session ON chat_threads (mode_id, session_id)
+  WHERE session_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY,

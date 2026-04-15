@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { AppDb } from '~/database/db.ts';
 import { chatMessages, chatThreads } from '~/database/schema.ts';
 import { buildThreadPayload } from '~/agents/reso/index.ts';
@@ -12,9 +12,13 @@ export async function ensureThreadAndAppendUser(
   db: AppDb,
   modeId: string,
   incomingThreadId: string | undefined,
-  userText: string
+  userText: string,
+  sessionId?: string | null
 ): Promise<{ threadId: string }> {
-  let threadId = incomingThreadId;
+  let threadId = incomingThreadId?.trim() || undefined;
+  const boundSession =
+    typeof sessionId === 'string' && isValidUuid(sessionId.trim()) ? sessionId.trim() : null;
+
   if (threadId) {
     if (!isValidUuid(threadId)) {
       throw new AppError('Invalid thread id', 400);
@@ -28,6 +32,18 @@ export async function ensureThreadAndAppendUser(
     }
     if (tr.modeId !== modeId) {
       throw new AppError('Thread does not match modeId', 400);
+    }
+  } else if (boundSession) {
+    const [existing] = await db
+      .select({ id: chatThreads.id })
+      .from(chatThreads)
+      .where(and(eq(chatThreads.modeId, modeId), eq(chatThreads.sessionId, boundSession)))
+      .limit(1);
+    if (existing) {
+      threadId = existing.id;
+    } else {
+      threadId = randomUUID();
+      await db.insert(chatThreads).values({ id: threadId, modeId, sessionId: boundSession });
     }
   } else {
     threadId = randomUUID();
@@ -88,13 +104,15 @@ export async function runChatTurn(
     system: unknown;
     modelOverride: unknown;
     dashscopeApiKey: unknown;
+    sessionId?: string | null;
   }
 ) {
   const { threadId } = await ensureThreadAndAppendUser(
     db,
     params.modeId,
     params.threadId,
-    params.userText
+    params.userText,
+    params.sessionId
   );
   const hist = await loadThreadHistory(db, threadId);
   const payloadMessages = buildThreadPayload(hist, params.system);
@@ -118,13 +136,15 @@ export async function prepareChatTurnStreamPayload(
     threadId?: string;
     userText: string;
     system: unknown;
+    sessionId?: string | null;
   }
 ): Promise<{ threadId: string; payloadMessages: UpstreamChatMessage[] }> {
   const { threadId } = await ensureThreadAndAppendUser(
     db,
     params.modeId,
     params.threadId,
-    params.userText
+    params.userText,
+    params.sessionId
   );
   const hist = await loadThreadHistory(db, threadId);
   const payloadMessages = buildThreadPayload(hist, params.system);

@@ -53,7 +53,9 @@ export const chatThreads = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    modeSessionUniq: uniqueIndex('idx_chat_threads_mode_session').on(t.modeId, t.sessionId),
+    modeSessionUniq: uniqueIndex('idx_chat_threads_mode_session')
+      .on(t.modeId, t.sessionId)
+      .where(sql`${t.sessionId} IS NOT NULL`),
     sessionIdx: index('idx_chat_threads_session_id').on(t.sessionId),
   })
 );

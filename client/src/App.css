@@ -2919,6 +2919,19 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+.agent-bubble--error.agent-bubble--assistant {
+  border-color: rgba(220, 80, 80, 0.55);
+  background: rgba(220, 80, 80, 0.08);
+}
+
+.agent-bubble-error-body {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .agent-bubble-role {
   font-size: 0.62rem;
   font-weight: 700;
