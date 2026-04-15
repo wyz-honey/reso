@@ -37,3 +37,25 @@ export function throwIfMissingSessionExternalThreadsTable(e: unknown): void {
     );
   }
 }
+
+/**
+ * 未执行 chat_threads.session_id 相关迁移时，按 mode_id + session_id 查询会报 Failed query / 42703 等。
+ */
+export function rethrowWithChatThreadsSessionHint(e: unknown): never {
+  const chain = collectErrorChain(e);
+  if (
+    /chat_threads/i.test(chain) &&
+    /session_id/i.test(chain) &&
+    (/Failed query/i.test(chain) ||
+      /42703/i.test(chain) ||
+      /42P01/i.test(chain) ||
+      /does not exist/i.test(chain) ||
+      /undefined_column/i.test(chain))
+  ) {
+    throw new AppError(
+      '数据库表 chat_threads 缺少列 session_id 或迁移未跑完。请在 PostgreSQL 依次执行：server/database/migrations/20260415120000_chat_threads_session_id.sql 与 server/database/migrations/20260416120000_chat_threads_mode_session_partial.sql；新库可执行 server/database/bootstrap.sql。',
+      503
+    );
+  }
+  throw e;
+}

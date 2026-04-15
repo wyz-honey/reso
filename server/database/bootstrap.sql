@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_chat_threads_mode_id ON chat_threads(mode_id);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_updated ON chat_threads(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_session_id ON chat_threads(session_id);

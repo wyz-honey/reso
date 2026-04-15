@@ -5,6 +5,7 @@ import { chatMessages, chatThreads } from '~/database/schema.ts';
 import { buildThreadPayload } from '~/agents/reso/index.ts';
 import type { UpstreamChatMessage } from '~/entities/chat.ts';
 import { AppError } from '~/utils/appError.ts';
+import { rethrowWithChatThreadsSessionHint } from '~/utils/dbErrorHints.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 import { invokeQwenChat, invokeQwenChatStream } from '~/services/dashscopeChat.ts';
 
@@ -34,16 +35,20 @@ export async function ensureThreadAndAppendUser(
       throw new AppError('Thread does not match modeId', 400);
     }
   } else if (boundSession) {
-    const [existing] = await db
-      .select({ id: chatThreads.id })
-      .from(chatThreads)
-      .where(and(eq(chatThreads.modeId, modeId), eq(chatThreads.sessionId, boundSession)))
-      .limit(1);
-    if (existing) {
-      threadId = existing.id;
-    } else {
-      threadId = randomUUID();
-      await db.insert(chatThreads).values({ id: threadId, modeId, sessionId: boundSession });
+    try {
+      const [existing] = await db
+        .select({ id: chatThreads.id })
+        .from(chatThreads)
+        .where(and(eq(chatThreads.modeId, modeId), eq(chatThreads.sessionId, boundSession)))
+        .limit(1);
+      if (existing) {
+        threadId = existing.id;
+      } else {
+        threadId = randomUUID();
+        await db.insert(chatThreads).values({ id: threadId, modeId, sessionId: boundSession });
+      }
+    } catch (e) {
+      rethrowWithChatThreadsSessionHint(e);
     }
   } else {
     threadId = randomUUID();

@@ -1001,12 +1001,36 @@ export default function HomePage() {
   );
 
   const startStreamingPcm = useCallback(async (ws) => {
-    const ac = new AudioContext();
-    audioContextRef.current = ac;
-    if (ac.state === 'suspended') {
-      await ac.resume().catch(() => {});
+    const win = window as Window & {
+      webkitAudioContext?: typeof AudioContext;
+      AudioWorkletNode?: typeof AudioWorkletNode;
+    };
+    const Ctor = win.AudioContext || win.webkitAudioContext;
+    if (!Ctor) {
+      throw new Error('当前浏览器不支持 Web Audio（无 AudioContext）');
     }
-    await ac.audioWorklet.addModule(pcmWorkletUrl);
+    if (!win.AudioWorkletNode || !('audioWorklet' in Ctor.prototype)) {
+      throw new Error(
+        '当前浏览器不支持 AudioWorklet。请使用较新版 Chrome / Edge / Firefox / Safari，并避免在无痕模式中禁用相关能力。'
+      );
+    }
+    const ac = new Ctor({ latencyHint: 'interactive' });
+    audioContextRef.current = ac;
+    const resumeCtx = async () => {
+      if (ac.state === 'suspended') {
+        await ac.resume();
+      }
+    };
+    await resumeCtx();
+    try {
+      await ac.audioWorklet.addModule(pcmWorkletUrl);
+    } catch (e) {
+      const hint =
+        e instanceof TypeError || (e instanceof Error && /fetch|load|Failed/i.test(e.message))
+          ? '（常见原因：页面非 https/localhost、或开发服务器未正确提供 worklet 脚本）'
+          : '';
+      throw new Error(`加载音频处理模块失败：${e instanceof Error ? e.message : String(e)}${hint}`);
+    }
     const node = new AudioWorkletNode(ac, 'pcm-capture', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -1019,7 +1043,11 @@ export default function HomePage() {
       const pcm = ev.data?.pcm;
       if (pcm instanceof Uint8Array) ws.send(pcm);
     };
-    const source = ac.createMediaStreamSource(streamRef.current);
+    const stream = streamRef.current;
+    if (!stream?.getAudioTracks?.()?.length) {
+      throw new Error('麦克风轨道已结束，请重新开始识别');
+    }
+    const source = ac.createMediaStreamSource(stream);
     sourceRef.current = source;
 
     const analyser = ac.createAnalyser();
@@ -1033,6 +1061,7 @@ export default function HomePage() {
     source.connect(node);
     node.connect(mute);
     mute.connect(ac.destination);
+    await resumeCtx();
   }, []);
 
   const onSelectMode = (id) => {
@@ -1083,6 +1112,7 @@ export default function HomePage() {
 
   const startRecognition = async () => {
     disconnectWs();
+    cleanupAudio();
     setPhase('connecting');
 
     if (isAsr || isCli || isHttp) {
@@ -1203,8 +1233,9 @@ export default function HomePage() {
     setPhase('recording');
     try {
       await startStreamingPcm(ws);
-    } catch {
-      setStatus('音频引擎启动失败，请刷新页面后重试');
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setStatus(detail ? `音频引擎启动失败：${detail}` : '音频引擎启动失败，请刷新页面后重试');
       setPhase('idle');
       cleanupAudio();
       ws.close();
