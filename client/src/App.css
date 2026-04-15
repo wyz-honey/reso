@@ -2919,6 +2919,44 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+/** RESO 对话：首 token 到达前占位 */
+.agent-stream-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.2rem 0 0.15rem;
+  min-height: 2.4rem;
+}
+
+.agent-stream-skeleton-line {
+  display: block;
+  height: 0.62rem;
+  border-radius: 5px;
+  width: 100%;
+  max-width: 100%;
+  background: linear-gradient(
+    105deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.12) 42%,
+    rgba(255, 255, 255, 0.05) 85%
+  );
+  background-size: 220% 100%;
+  animation: agent-stream-skel 1.15s ease-in-out infinite;
+}
+
+.agent-stream-skeleton-line--short {
+  width: 68%;
+}
+
+@keyframes agent-stream-skel {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .agent-bubble--error.agent-bubble--assistant {
   border-color: rgba(220, 80, 80, 0.55);
   background: rgba(220, 80, 80, 0.08);
@@ -2955,6 +2993,55 @@
 
 .agent-bubble-text--md {
   white-space: normal;
+}
+
+.agent-tool-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.agent-tool-card {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 0.8rem;
+}
+
+.agent-tool-card--error {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.agent-tool-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+  color: var(--text-muted, #a1a1aa);
+}
+
+.agent-tool-card-name {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.agent-tool-card-pre {
+  margin: 0.2rem 0 0;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 10rem;
+  overflow: auto;
 }
 
 .agent-md-root {
@@ -3721,6 +3808,11 @@ a.outputs-list-row--link:hover {
   font-size: 0.86rem;
   color: var(--text-muted);
   line-height: 1.55;
+}
+
+.settings-subtitle--compact {
+  margin-top: 0.35rem;
+  max-width: 52rem;
 }
 
 .settings-card {
@@ -4598,4 +4690,82 @@ a.outputs-list-row--link:hover {
 
 .cursor-cli-diff-row--del .cursor-cli-diff-marker {
   color: rgb(160, 55, 55);
+}
+
+/* 任务页 */
+.sessions-code-inline {
+  font-size: 0.85em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--surface-elevated, rgba(0, 0, 0, 0.06));
+}
+
+.tasks-card-meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.tasks-card-tags {
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tasks-tag-pill {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(100, 120, 200, 0.12);
+  color: var(--text-muted);
+}
+
+a.tasks-link-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-detail-nav-card {
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  margin-bottom: 1.25rem;
+}
+
+.task-detail-nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.task-detail-code {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  background: var(--surface-elevated, rgba(0, 0, 0, 0.06));
+}
+
+.task-detail-code--break {
+  word-break: break-all;
+  flex: 1 1 100%;
+}
+
+.task-detail-nav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.task-detail-form {
+  max-width: 52rem;
+}
+
+.task-detail-meta {
+  margin-top: 0.75rem;
 }

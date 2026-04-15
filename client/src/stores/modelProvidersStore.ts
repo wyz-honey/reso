@@ -153,6 +153,11 @@ function migrate(raw: unknown): ModelProviderPersisted {
   return ensureBuiltinQwenAsrSpeechModel(base);
 }
 
+/** 将服务端 `model_providers` JSON 解析为目录状态（非法结构则回退内置默认） */
+export function migrateModelProvidersFromServerPayload(raw: unknown): ModelProviderPersisted {
+  return migrate(raw);
+}
+
 type Actions = {
   updateProvider: (providerId: string, patch: Partial<ProviderRecord>) => void;
   addModel: (args: {

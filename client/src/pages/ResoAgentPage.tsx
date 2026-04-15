@@ -152,7 +152,7 @@ export default function ResoAgentPage() {
             </NavLink>
             <h1 className="sessions-title">RESO 智能体</h1>
             <p className="sessions-subtitle">
-              内置对话智能体：配置名称与说明、系统提示词、供应商与对话模型。工具与技能即将支持。
+              内置对话智能体：配置名称与说明、系统提示词、供应商与对话模型。流式对话走 pi-agent-core（百炼 OpenAI 兼容）+ AG-UI 事件；支持线程记忆与技能工具。
             </p>
             {row ? (
               <p className="reso-agent-meta">

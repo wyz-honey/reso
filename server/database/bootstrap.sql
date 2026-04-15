@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS agent_memory text NOT NULL DEFAULT '';
+
 ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES sessions(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_chat_threads_mode_id ON chat_threads(mode_id);
 CREATE INDEX IF NOT EXISTS idx_chat_threads_updated ON chat_threads(updated_at DESC);
@@ -72,3 +74,33 @@ CREATE TABLE IF NOT EXISTS outputs (
 );
 CREATE INDEX IF NOT EXISTS idx_outputs_delivery_type ON outputs(delivery_type);
 CREATE INDEX IF NOT EXISTS idx_outputs_target_kind ON outputs(target_kind);
+
+CREATE TABLE IF NOT EXISTS reso_client_settings (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  voice_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  model_providers JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO reso_client_settings (id, voice_settings, model_providers)
+VALUES ('default', '{}'::jsonb, '{}'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  instruction TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  expected_at TIMESTAMPTZ,
+  scheduled_at TIMESTAMPTZ,
+  target_output_id TEXT,
+  source_paragraph_id UUID REFERENCES paragraphs(id) ON DELETE SET NULL,
+  batch_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_scheduled_at ON tasks(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_batch_key ON tasks(batch_key);

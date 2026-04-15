@@ -1355,7 +1355,11 @@ export default function HomePage() {
         const p = s[chatKey] || [];
         return {
           ...s,
-          [chatKey]: [...p, { role: 'user', content: text }, { role: 'assistant', content: '' }],
+          [chatKey]: [
+            ...p,
+            { role: 'user', content: text },
+            { role: 'assistant', content: '', streamPending: true },
+          ],
         };
       });
       try {
@@ -1387,6 +1391,11 @@ export default function HomePage() {
         const model = resolvedModel || vs.agentModel || undefined;
         const dashscopeApiKey = getResolvedResoChatApiKey() || vs.dashscopeApiKey || undefined;
         const threadId = getAgentThreadIdForSession(modeId, ensuredSid);
+        const agStream = {
+          text: '',
+          textSeg: 0,
+          tools: [],
+        };
         await apiAgentChatTurnStream(
           {
             modeId,
@@ -1402,21 +1411,107 @@ export default function HomePage() {
               streamThreadId = ev.threadId;
               setAgentThreadIdForSession(modeId, ensuredSid, ev.threadId);
             }
-            if (ev.type === 'delta' && ev.text) {
+            if (ev.type === 'RUN_STARTED' && ev.threadId) {
+              streamThreadId = String(ev.threadId);
+              setAgentThreadIdForSession(modeId, ensuredSid, String(ev.threadId));
+            }
+            if (ev.type === 'TEXT_MESSAGE_START') {
+              agStream.textSeg += 1;
+              if (agStream.textSeg > 1) {
+                agStream.text += '\n\n';
+              }
+            }
+            if (ev.type === 'TEXT_MESSAGE_CONTENT' && typeof ev.delta === 'string' && ev.delta) {
+              agStream.text += ev.delta;
               setChatByModeId((s) => {
                 const list = [...(s[chatKey] || [])];
                 const last = list[list.length - 1];
                 if (last?.role === 'assistant') {
                   list[list.length - 1] = {
                     ...last,
-                    content: `${last.content || ''}${ev.text}`,
+                    content: agStream.text,
+                    aguiTools: agStream.tools.length ? [...agStream.tools] : last.aguiTools,
+                    streamPending: false,
+                  };
+                }
+                return { ...s, [chatKey]: list };
+              });
+            }
+            if (ev.type === 'TOOL_CALL_START' && ev.toolCallId && ev.toolCallName) {
+              agStream.tools.push({
+                toolCallId: String(ev.toolCallId),
+                toolCallName: String(ev.toolCallName),
+                args: '',
+                result: '',
+              });
+              setChatByModeId((s) => {
+                const list = [...(s[chatKey] || [])];
+                const last = list[list.length - 1];
+                if (last?.role === 'assistant') {
+                  list[list.length - 1] = {
+                    ...last,
+                    aguiTools: [...agStream.tools],
+                    streamPending: false,
+                  };
+                }
+                return { ...s, [chatKey]: list };
+              });
+            }
+            if (ev.type === 'TOOL_CALL_ARGS' && ev.toolCallId && typeof ev.delta === 'string') {
+              const id = String(ev.toolCallId);
+              const row = agStream.tools.find((t) => t.toolCallId === id);
+              if (row) {
+                row.args = `${row.args || ''}${ev.delta}`;
+                if (row.args.length > 12000) {
+                  row.args = `${row.args.slice(0, 12000)}…`;
+                }
+              }
+              setChatByModeId((s) => {
+                const list = [...(s[chatKey] || [])];
+                const last = list[list.length - 1];
+                if (last?.role === 'assistant') {
+                  list[list.length - 1] = {
+                    ...last,
+                    aguiTools: [...agStream.tools],
+                  };
+                }
+                return { ...s, [chatKey]: list };
+              });
+            }
+            if (ev.type === 'TOOL_CALL_RESULT' && ev.toolCallId) {
+              const id = String(ev.toolCallId);
+              const row = agStream.tools.find((t) => t.toolCallId === id);
+              if (row) {
+                row.result = typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content ?? '');
+                if (row.result.length > 16000) {
+                  row.result = `${row.result.slice(0, 16000)}…`;
+                }
+              }
+              setChatByModeId((s) => {
+                const list = [...(s[chatKey] || [])];
+                const last = list[list.length - 1];
+                if (last?.role === 'assistant') {
+                  list[list.length - 1] = {
+                    ...last,
+                    aguiTools: [...agStream.tools],
                   };
                 }
                 return { ...s, [chatKey]: list };
               });
             }
             if (ev.type === 'done' && Array.isArray(ev.messages)) {
-              setChatByModeId((s) => ({ ...s, [chatKey]: ev.messages }));
+              const tools = [...agStream.tools];
+              setChatByModeId((s) => {
+                const mapped = ev.messages.map((row) => ({
+                  role: row.role,
+                  content: row.content,
+                }));
+                const li = mapped.length - 1;
+                if (li >= 0 && mapped[li].role === 'assistant' && tools.length) {
+                  mapped[li] = { ...mapped[li], aguiTools: tools };
+                }
+                return { ...s, [chatKey]: mapped };
+              });
             }
           }
         );
@@ -1428,9 +1523,14 @@ export default function HomePage() {
           const list = [...(s[chatKey] || [])];
           const last = list[list.length - 1];
           if (last?.role === 'assistant') {
-            list[list.length - 1] = { role: 'assistant', content: msg, error: true };
+            list[list.length - 1] = {
+              role: 'assistant',
+              content: msg,
+              error: true,
+              streamPending: false,
+            };
           } else {
-            list.push({ role: 'assistant', content: msg, error: true });
+            list.push({ role: 'assistant', content: msg, error: true, streamPending: false });
           }
           return { ...s, [chatKey]: list };
         });
@@ -2428,6 +2528,7 @@ export default function HomePage() {
               ) : (
                 agentMessages.map((m, i) => {
                   const err = Boolean((m as { error?: boolean }).error);
+                  const streamPending = Boolean((m as { streamPending?: boolean }).streamPending);
                   return (
                     <div
                       key={`${workbenchActivityKey}-msg-${i}`}
@@ -2435,15 +2536,47 @@ export default function HomePage() {
                     >
                       <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
                       <div
-                        className={`agent-bubble-text ${m.role === 'assistant' && !err ? 'agent-bubble-text--md' : ''}`}
+                        className={`agent-bubble-text ${m.role === 'assistant' && !err && !streamPending ? 'agent-bubble-text--md' : ''}`}
                       >
                         {m.role === 'assistant' ? (
                           err ? (
                             <div className="agent-bubble-error-body" role="alert">
                               {m.content}
                             </div>
+                          ) : streamPending ? (
+                            <div className="agent-stream-skeleton" aria-busy="true" aria-label="正在生成回复">
+                              <span className="agent-stream-skeleton-line" />
+                              <span className="agent-stream-skeleton-line agent-stream-skeleton-line--short" />
+                            </div>
                           ) : (
-                            <AssistantMarkdown text={m.content} />
+                            <>
+                              {Array.isArray(m.aguiTools) && m.aguiTools.length > 0 ? (
+                                <div className="agent-tool-trace" aria-label="工具调用">
+                                  {m.aguiTools.map((t) => (
+                                    <div
+                                      key={t.toolCallId}
+                                      className={`agent-tool-card${t.result && t.result.toLowerCase().includes('拒绝') ? ' agent-tool-card--error' : ''}`}
+                                    >
+                                      <div className="agent-tool-card-head">
+                                        <span className="agent-tool-card-name">{t.toolCallName}</span>
+                                        <span className="sessions-muted">{t.toolCallId.slice(0, 8)}…</span>
+                                      </div>
+                                      {t.args ? (
+                                        <pre className="agent-tool-card-pre" aria-label="参数">
+                                          {t.args}
+                                        </pre>
+                                      ) : null}
+                                      {t.result ? (
+                                        <pre className="agent-tool-card-pre" aria-label="结果">
+                                          {t.result}
+                                        </pre>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <AssistantMarkdown text={m.content} />
+                            </>
                           )
                         ) : (
                           m.content

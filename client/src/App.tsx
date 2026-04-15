@@ -7,6 +7,9 @@ import SettingsPage from './pages/SettingsPage';
 import ModelProvidersPage from './pages/ModelProvidersPage';
 import QuickInputsPage from './pages/QuickInputsPage';
 import SessionsPage from './pages/SessionsPage';
+import TasksPage from './pages/TasksPage';
+import TaskDetailPage from './pages/TaskDetailPage';
+import ClientSettingsDbSync from './components/ClientSettingsDbSync';
 import './App.css';
 
 const SIDEBAR_COLLAPSED_KEY = 'reso_sidebar_collapsed_v1';
@@ -27,6 +30,17 @@ function IconWorkbench() {
       <rect x="14" y="3" width="7" height="7" rx="1.5" strokeLinejoin="round" />
       <rect x="3" y="14" width="7" height="7" rx="1.5" strokeLinejoin="round" />
       <rect x="14" y="14" width="7" height="7" rx="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** 输入 · 任务：清单 */
+function IconTasks() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M9 11l3 3L22 4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 7h1M8 12h1M8 17h1" strokeLinecap="round" />
     </svg>
   );
 }
@@ -116,6 +130,7 @@ export default function App() {
 
   return (
     <div className={`shell ${navCollapsed ? 'shell--nav-collapsed' : ''}`}>
+      <ClientSettingsDbSync />
       <aside className="sidebar" aria-label="主导航">
         <div className="sidebar-brand">
           Reso
@@ -135,6 +150,10 @@ export default function App() {
             <NavLink to="/quick-inputs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <IconQuick />
               <span className="nav-link-label">快捷上下文</span>
+            </NavLink>
+            <NavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <IconTasks />
+              <span className="nav-link-label">任务</span>
             </NavLink>
           </div>
           <div className="sidebar-nav-group">
@@ -171,6 +190,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/quick-inputs" element={<QuickInputsPage />} />
+          <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
           <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/outputs/:outputId" element={<OutputDetailPage />} />
           <Route path="/outputs" element={<OutputsPage />} />

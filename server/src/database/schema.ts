@@ -49,6 +49,8 @@ export const chatThreads = pgTable(
     modeId: text('mode_id').notNull(),
     /** 绑定 RESO 会话时：同一 (mode_id, session_id) 仅一条线程（如 Cursor CLI 工作台对话落库） */
     sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
+    /** RESO Pi 智能体：线程级知识记忆（纯文本，由工具追加） */
+    agentMemory: text('agent_memory').notNull().default(''),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -110,5 +112,54 @@ export const outputs = pgTable(
   (t) => ({
     deliveryIdx: index('idx_outputs_delivery_type').on(t.deliveryType),
     kindIdx: index('idx_outputs_target_kind').on(t.targetKind),
+  })
+);
+
+/** 单租户工作台：语音设置 + 模型目录 JSON，与客户端 zustand 持久化结构对应 */
+export const resoClientSettings = pgTable('reso_client_settings', {
+  id: text('id').primaryKey(),
+  voiceSettings: jsonb('voice_settings')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  modelProviders: jsonb('model_providers')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * 从段落提炼的可执行任务：名称、概要、给执行器（如 Cursor）的正文、状态与时间维度。
+ * batch_key 相同表示同一批，便于客户端批量驱动 CLI；scheduled_at 供后续定时调度使用。
+ */
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: uuid('id').primaryKey(),
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    /** 可直接交给目标执行器的指令正文 */
+    instruction: text('instruction').notNull(),
+    status: text('status').notNull().default('draft'),
+    tags: jsonb('tags').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    expectedAt: timestamp('expected_at', { withTimezone: true }),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+    /** 可选：默认工作台目标 output id */
+    targetOutputId: text('target_output_id'),
+    /** 可选：来源段落 */
+    sourceParagraphId: uuid('source_paragraph_id').references(() => paragraphs.id, {
+      onDelete: 'set null',
+    }),
+    /** 相同非空 batch_key 的任务视为一批（批量 Cursor 等场景） */
+    batchKey: text('batch_key'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    statusIdx: index('idx_tasks_status').on(t.status),
+    createdIdx: index('idx_tasks_created_at').on(t.createdAt),
+    scheduledIdx: index('idx_tasks_scheduled_at').on(t.scheduledAt),
+    batchIdx: index('idx_tasks_batch_key').on(t.batchKey),
   })
 );

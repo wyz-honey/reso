@@ -142,6 +142,12 @@ function normalizeState(partial: Partial<VoiceSettings> & Record<string, unknown
   };
 }
 
+/** 将服务端 `voice_settings` JSON 解析为当前客户端形态（未知字段按默认处理） */
+export function parseVoiceSettingsFromServer(raw: unknown): VoiceSettings {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return normalizeState({});
+  return normalizeState(raw as Partial<VoiceSettings> & Record<string, unknown>);
+}
+
 type VoiceStore = VoiceSettings & {
   saveVoiceSettings: (patch: Partial<VoiceSettings>) => VoiceSettings;
 };

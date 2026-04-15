@@ -439,6 +439,9 @@ export async function apiAgentChatTurnStream(
         if (j.type === 'error') {
           throw new Error(String(j.error || '对话流失败'));
         }
+        if (j.type === 'RUN_ERROR') {
+          throw new Error(String(j.message || '对话流失败'));
+        }
         onEvent(j);
       } catch (e) {
         if (e instanceof SyntaxError) continue;
@@ -503,4 +506,111 @@ export async function apiDeleteQuickInput(id: string) {
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `删除失败 (${r.status})`));
   return data;
+}
+
+/** 与 GET /api/tasks 单条结构一致 */
+export type TaskRecord = {
+  id: string;
+  name: string;
+  description: string;
+  instruction: string;
+  status: string;
+  tags: string[];
+  expected_at: string | null;
+  scheduled_at: string | null;
+  target_output_id: string | null;
+  source_paragraph_id: string | null;
+  batch_key: string | null;
+  created_at: string;
+  updated_at: string;
+  nav_path: string;
+};
+
+export async function fetchTasks(params?: { status?: string; tag?: string }): Promise<{
+  items: TaskRecord[];
+  statuses: string[];
+}> {
+  const q = new URLSearchParams();
+  if (params?.status) q.set('status', params.status);
+  if (params?.tag) q.set('tag', params.tag);
+  const r = await fetch(`/api/tasks?${q}`);
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载任务失败 (${r.status})`));
+  return {
+    items: (data.items as TaskRecord[]) || [],
+    statuses: Array.isArray(data.statuses) ? (data.statuses as string[]) : [],
+  };
+}
+
+export async function fetchTask(id: string): Promise<TaskRecord> {
+  const r = await fetch(`/api/tasks/${encodeURIComponent(id)}`);
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载任务失败 (${r.status})`));
+  return data as TaskRecord;
+}
+
+export async function apiCreateTask(body: Record<string, unknown>): Promise<TaskRecord> {
+  const r = await fetch('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `创建任务失败 (${r.status})`));
+  return data as TaskRecord;
+}
+
+export async function apiUpdateTask(id: string, patch: Record<string, unknown>): Promise<TaskRecord> {
+  const r = await fetch(`/api/tasks/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `更新任务失败 (${r.status})`));
+  return data as TaskRecord;
+}
+
+export async function apiDeleteTask(id: string): Promise<void> {
+  const r = await fetch(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `删除任务失败 (${r.status})`));
+  void data;
+}
+
+/** GET /api/client-settings；未配置数据库或请求失败时返回 null */
+export async function fetchClientSettings(): Promise<{
+  voice: Record<string, unknown>;
+  modelProviders: unknown;
+} | null> {
+  try {
+    const r = await fetch('/api/client-settings');
+    const data = await parseJson(r);
+    if (!r.ok) return null;
+    const voiceRaw = data.voice;
+    const voice =
+      voiceRaw != null && typeof voiceRaw === 'object' && !Array.isArray(voiceRaw)
+        ? (voiceRaw as Record<string, unknown>)
+        : {};
+    return { voice, modelProviders: data.modelProviders };
+  } catch {
+    return null;
+  }
+}
+
+/** PUT /api/client-settings；成功返回 true */
+export async function putClientSettings(payload: {
+  voice: Record<string, unknown>;
+  modelProviders: unknown;
+}): Promise<boolean> {
+  try {
+    const r = await fetch('/api/client-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice: payload.voice, modelProviders: payload.modelProviders }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }

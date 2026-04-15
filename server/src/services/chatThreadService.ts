@@ -191,6 +191,21 @@ export async function getChatThreadBundle(db: AppDb, threadId: string) {
   };
 }
 
+export async function getChatThreadAgentMemory(db: AppDb, threadId: string): Promise<string> {
+  const [row] = await db
+    .select({ agentMemory: chatThreads.agentMemory })
+    .from(chatThreads)
+    .where(eq(chatThreads.id, threadId));
+  return typeof row?.agentMemory === 'string' ? row.agentMemory : '';
+}
+
+export async function setChatThreadAgentMemory(db: AppDb, threadId: string, memory: string): Promise<void> {
+  await db
+    .update(chatThreads)
+    .set({ agentMemory: memory, updatedAt: sql`now()` })
+    .where(eq(chatThreads.id, threadId));
+}
+
 export async function deleteChatThreadMessages(db: AppDb, threadId: string): Promise<number> {
   const [existsRow] = await db
     .select({ x: sql<number>`1` })

@@ -9,8 +9,10 @@ import { createAgentRouter } from '~/routes/agent.ts';
 import { createChatRouter } from '~/routes/chat.ts';
 import { createSessionsRouter, handleSessionsBatchDelete } from '~/routes/sessions.ts';
 import { createQuickInputsRouter } from '~/routes/quickInputs.ts';
+import { createTasksRouter } from '~/routes/tasks.ts';
 import { createCursorRouter } from '~/routes/cursor.ts';
 import { createMetaRouter } from '~/routes/meta.ts';
+import { createClientSettingsRouter } from '~/routes/clientSettings.ts';
 
 function resolveClientDist(): string | null {
   const env = process.env.RESO_CLIENT_DIST;
@@ -31,6 +33,7 @@ export function createApp(db: AppDb | null): express.Application {
   app.use(httpAccessLogger());
 
   app.use(createHealthRouter(db));
+  app.use(createClientSettingsRouter(db));
   app.use(createMetaRouter());
   app.use(createAgentRouter(db));
   app.use(createChatRouter(db));
@@ -39,6 +42,7 @@ export function createApp(db: AppDb | null): express.Application {
   });
   app.use('/api/sessions', createSessionsRouter(db));
   app.use(createQuickInputsRouter(db));
+  app.use(createTasksRouter(db));
   app.use(createCursorRouter());
 
   const clientDist = resolveClientDist();

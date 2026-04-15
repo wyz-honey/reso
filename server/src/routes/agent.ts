@@ -6,7 +6,8 @@ import {
   prepareChatTurnStreamPayload,
   runChatTurn,
 } from '~/services/chatThreadService.ts';
-import { invokeQwenChat, invokeQwenChatStream } from '~/services/dashscopeChat.ts';
+import { invokeQwenChat } from '~/services/dashscopeChat.ts';
+import { runResoPiChatStream } from '~/agents/reso/runResoPiChatStream.ts';
 import { getErrorStatus } from '~/utils/appError.ts';
 import { serviceError } from '~/utils/logger.ts';
 
@@ -115,7 +116,7 @@ export function createAgentRouter(db: AppDb | null): Router {
     };
 
     try {
-      const { threadId, payloadMessages } = await prepareChatTurnStreamPayload(db, {
+      const { threadId } = await prepareChatTurnStreamPayload(db, {
         modeId,
         threadId: incomingThreadId,
         userText: text,
@@ -131,19 +132,14 @@ export function createAgentRouter(db: AppDb | null): Router {
 
       writeSse({ type: 'meta', threadId });
 
-      let assistantContent = '';
-      await invokeQwenChatStream(
-        payloadMessages,
+      await runResoPiChatStream({
+        db,
+        threadId,
+        system,
         modelOverride,
         dashscopeApiKey,
-        (d) => {
-          assistantContent += d;
-          writeSse({ type: 'delta', text: d });
-        }
-      );
-
-      const messages = await finalizeChatTurnStream(db, threadId, assistantContent);
-      writeSse({ type: 'done', messages });
+        writeSse,
+      });
       res.end();
     } catch (e) {
       if (!res.headersSent) {
@@ -159,7 +155,13 @@ export function createAgentRouter(db: AppDb | null): Router {
       }
       serviceError('agent', 'POST /api/agent/chat-turn-stream failed (after headers)', e);
       try {
-        writeSse({ type: 'error', error: e instanceof Error ? e.message : 'stream failed' });
+        const msg = e instanceof Error ? e.message : 'stream failed';
+        writeSse({
+          type: 'RUN_ERROR',
+          message: msg,
+          timestamp: Date.now(),
+        });
+        writeSse({ type: 'error', error: msg });
       } catch {
         /* ignore */
       }
