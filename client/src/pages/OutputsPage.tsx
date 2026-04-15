@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { NavLink } from 'react-router-dom';
 import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
@@ -29,6 +30,8 @@ import {
   updateLegacyCustomMode,
 } from '../workModes';
 import '../App.css';
+import { AppModalShell } from '@/components/ui/AppModalShell';
+import { useOutputsPageStore } from '../stores/outputsPageStore';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
@@ -114,19 +117,63 @@ function rowToDraft(row) {
 }
 
 export default function OutputsPage() {
-  const [tick, setTick] = useState(0);
-  const [searchInput, setSearchInput] = useState('');
-  const [searchQ, setSearchQ] = useState('');
-  const [filterType, setFilterType] = useState('all');
-  const [filterKind, setFilterKind] = useState('all');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [expandedId, setExpandedId] = useState(null);
-  const [draft, setDraft] = useState(emptyDraft);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalDraft, setModalDraft] = useState(() => emptyDraft());
-  const [formErr, setFormErr] = useState('');
-  const [msg, setMsg] = useState('');
+  const {
+    tick,
+    setTick,
+    searchInput,
+    setSearchInput,
+    searchQ,
+    setSearchQ,
+    filterType,
+    setFilterType,
+    filterKind,
+    setFilterKind,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    expandedId,
+    setExpandedId,
+    draft,
+    setDraft,
+    modalOpen,
+    setModalOpen,
+    modalDraft,
+    setModalDraft,
+    formErr,
+    setFormErr,
+    msg,
+    setMsg,
+  } = useOutputsPageStore(
+    useShallow((s) => ({
+      tick: s.tick,
+      setTick: s.setTick,
+      searchInput: s.searchInput,
+      setSearchInput: s.setSearchInput,
+      searchQ: s.searchQ,
+      setSearchQ: s.setSearchQ,
+      filterType: s.filterType,
+      setFilterType: s.setFilterType,
+      filterKind: s.filterKind,
+      setFilterKind: s.setFilterKind,
+      page: s.page,
+      setPage: s.setPage,
+      pageSize: s.pageSize,
+      setPageSize: s.setPageSize,
+      expandedId: s.expandedId,
+      setExpandedId: s.setExpandedId,
+      draft: s.draft,
+      setDraft: s.setDraft,
+      modalOpen: s.modalOpen,
+      setModalOpen: s.setModalOpen,
+      modalDraft: s.modalDraft,
+      setModalDraft: s.setModalDraft,
+      formErr: s.formErr,
+      setFormErr: s.setFormErr,
+      msg: s.msg,
+      setMsg: s.setMsg,
+    }))
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setSearchQ(searchInput.trim()), 320);
@@ -571,6 +618,33 @@ export default function OutputsPage() {
                     );
                   }
 
+                  if (o.builtin && o.id === BUILTIN_OUTPUT_ID.QODER) {
+                    return (
+                      <li key={o.id} className="outputs-list-item">
+                        <NavLink
+                          to={`/outputs/${o.id}`}
+                          className="sessions-list-row sessions-list-row--rich outputs-list-row--link"
+                        >
+                          <div className="sessions-list-row-text">
+                            <div className="sessions-list-row-title">
+                              {o.name}
+                              <span className="outputs-badge outputs-badge--builtin">内置</span>
+                              <span className="outputs-badge outputs-badge--agent">Agent·CLI</span>
+                            </div>
+                            <div className="sessions-list-row-preview">
+                              {(o.description || '').slice(0, 200)}
+                              {(o.description || '').length > 200 ? '…' : ''}
+                            </div>
+                            {rowFoot}
+                          </div>
+                          <div className="sessions-list-row-meta">
+                            <span className="outputs-row-action">详情</span>
+                          </div>
+                        </NavLink>
+                      </li>
+                    );
+                  }
+
                   return (
                     <li key={o.id} className="outputs-list-item">
                       <button
@@ -860,20 +934,17 @@ export default function OutputsPage() {
         </div>
       </div>
 
-      {modalOpen ? (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="outputs-modal-title"
-          onClick={(e) => e.target === e.currentTarget && setModalOpen(false)}
-        >
-          <div className="modal-card modal-card--wide">
-            <h2 id="outputs-modal-title" className="modal-title">
-              新建输出
-            </h2>
-            <p className="modal-desc">将出现在目标列表与工作台模式选择中，仅保存在本机浏览器。</p>
-            <form onSubmit={submitModal} className="modal-form">
+      <AppModalShell
+        open={modalOpen}
+        onOpenChange={(next) => {
+          if (!next) setModalOpen(false);
+        }}
+        titleId="outputs-modal-title"
+        title="新建输出"
+        description="将出现在目标列表与工作台模式选择中，仅保存在本机浏览器。"
+        contentClassName="modal-card--wide sm:max-w-[min(96vw,720px)]"
+      >
+        <form onSubmit={submitModal} className="modal-form">
               {formErr ? <p className="outputs-form-err">{formErr}</p> : null}
               <label className="modal-label">
                 名称
@@ -1025,9 +1096,7 @@ export default function OutputsPage() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      ) : null}
+      </AppModalShell>
     </div>
   );
 }

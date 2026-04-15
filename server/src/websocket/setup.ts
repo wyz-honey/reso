@@ -1,12 +1,13 @@
 import type { Server } from 'http';
 import fs from 'fs';
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { connectDashScope, resolveAsrModel } from '~/services/asrBridge.ts';
 import { connectQwenAsrRealtime, isQwenAsrRealtimeModel } from '~/services/qwenAsrRealtimeBridge.ts';
 import { resolveDashscopeApiKey } from '~/services/dashscopeChat.ts';
 import {
-  ensureCursorSessionOutputDir,
+  ensureCliWorkbenchSessionOutputDir,
   readCursorSessionFilesSync,
+  type CliWorkbenchKind,
 } from '~/services/cursorPaths.ts';
 import {
   CURSOR_TAIL_WS_DEBOUNCE_MS,
@@ -26,9 +27,18 @@ function closeWss(server: WebSocketServer): Promise<void> {
   });
 }
 
-export function attachWebSockets(httpServer: Server): { shutdownSockets: () => Promise<void> } {
+function getUiControlSecret(): string {
+  return String(process.env.RESO_UI_CONTROL_SECRET ?? '').trim();
+}
+
+export function attachWebSockets(httpServer: Server): {
+  shutdownSockets: () => Promise<void>;
+  broadcastUiControlCommands: (commands: unknown[]) => number;
+} {
   const wss = new WebSocketServer({ noServer: true });
   const wssCursor = new WebSocketServer({ noServer: true });
+  const wssUiControl = new WebSocketServer({ noServer: true });
+  const uiControlClients = new Set<WebSocket>();
 
   httpServer.on('upgrade', (req, socket, head) => {
     const pathname = upgradePathname(req.url);
@@ -44,7 +54,86 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
       });
       return;
     }
+    if (pathname === '/ws/ui-control') {
+      wssUiControl.handleUpgrade(req, socket, head, (ws) => {
+        wssUiControl.emit('connection', ws, req);
+      });
+      return;
+    }
     socket.destroy();
+  });
+
+  function broadcastUiControlCommands(commands: unknown[]): number {
+    const payload = JSON.stringify({ type: 'ui_commands', commands });
+    let n = 0;
+    for (const clientWs of uiControlClients) {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        try {
+          clientWs.send(payload);
+          n += 1;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return n;
+  }
+
+  wssUiControl.on('connection', (clientWs) => {
+    let authed = false;
+    const secret = getUiControlSecret();
+    const authTimer = setTimeout(() => {
+      if (!authed) {
+        try {
+          clientWs.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 12_000);
+
+    const safeSend = (obj: unknown) => {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify(obj));
+      }
+    };
+
+    const cleanup = () => {
+      clearTimeout(authTimer);
+      uiControlClients.delete(clientWs);
+    };
+
+    clientWs.on('message', (data, isBinary) => {
+      if (isBinary || authed) return;
+      let cmd: { type?: string; token?: string };
+      try {
+        cmd = JSON.parse(data.toString()) as typeof cmd;
+      } catch {
+        return;
+      }
+      if (cmd.type !== 'subscribe') {
+        safeSend({ type: 'error', message: 'expected subscribe' });
+        return;
+      }
+      if (secret) {
+        if (typeof cmd.token !== 'string' || cmd.token !== secret) {
+          safeSend({ type: 'error', message: 'unauthorized' });
+          try {
+            clientWs.close();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+      }
+      authed = true;
+      clearTimeout(authTimer);
+      uiControlClients.add(clientWs);
+      safeSend({ type: 'subscribed' });
+    });
+
+    clientWs.on('close', cleanup);
+    clientWs.on('error', cleanup);
   });
 
   wss.on('connection', (clientWs) => {
@@ -224,7 +313,7 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
 
     clientWs.on('message', (data, isBinary) => {
       if (isBinary) return;
-      let cmd: { type?: string; sessionId?: string };
+      let cmd: { type?: string; sessionId?: string; cliKind?: string };
       try {
         cmd = JSON.parse(data.toString()) as typeof cmd;
       } catch {
@@ -232,6 +321,8 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
       }
       if (cmd.type !== 'subscribe') return;
       const sid = typeof cmd.sessionId === 'string' ? cmd.sessionId.trim() : '';
+      const cliKind: CliWorkbenchKind =
+        String(cmd.cliKind ?? '').trim().toLowerCase() === 'qoder' ? 'qoder' : 'cursor';
       if (!isValidUuid(sid)) {
         safeSend({ type: 'error', message: 'invalid sessionId' });
         return;
@@ -239,7 +330,7 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
       stopWatch();
       let dirAbs: string;
       try {
-        dirAbs = ensureCursorSessionOutputDir(sid);
+        dirAbs = ensureCliWorkbenchSessionOutputDir(sid, cliKind);
       } catch (e) {
         safeSend({ type: 'error', message: e instanceof Error ? e.message : 'mkdir failed' });
         return;
@@ -283,6 +374,8 @@ export function attachWebSockets(httpServer: Server): { shutdownSockets: () => P
   });
 
   return {
-    shutdownSockets: () => Promise.all([closeWss(wss), closeWss(wssCursor)]).then(() => {}),
+    shutdownSockets: () =>
+      Promise.all([closeWss(wss), closeWss(wssCursor), closeWss(wssUiControl)]).then(() => {}),
+    broadcastUiControlCommands,
   };
 }

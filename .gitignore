@@ -8,3 +8,4 @@ dist
 .cursor/
 cursor/
 server/outputs/cursor/
+server/outputs/qoder/

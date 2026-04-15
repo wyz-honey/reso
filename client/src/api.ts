@@ -52,9 +52,16 @@ export async function apiCreateSession(): Promise<string> {
   return data.id as string;
 }
 
-export async function fetchCursorSessionPaths(sessionId: string) {
+export type CliWorkbenchKind = 'cursor' | 'qoder';
+
+export async function fetchCursorSessionPaths(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+) {
   const sid = String(sessionId || '').trim();
-  const r = await fetch(`/api/cursor/session-paths?sessionId=${encodeURIComponent(sid)}`);
+  const q = new URLSearchParams({ sessionId: sid });
+  if (kind === 'qoder') q.set('cliKind', 'qoder');
+  const r = await fetch(`/api/cursor/session-paths?${q}`);
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `解析 Cursor 输出路径失败 (${r.status})`));
   return data;
@@ -64,10 +71,11 @@ export async function fetchCursorSessionPaths(sessionId: string) {
 export async function apiCursorRun(
   sessionId: string,
   command: string,
-  options?: { cliEnv?: Record<string, string> }
+  options?: { cliEnv?: Record<string, string>; cliKind?: CliWorkbenchKind }
 ): Promise<{ pid: number }> {
   const sid = String(sessionId || '').trim();
   const body: Record<string, unknown> = { sessionId: sid, command: String(command ?? '') };
+  if (options?.cliKind === 'qoder') body.cliKind = 'qoder';
   if (options?.cliEnv && Object.keys(options.cliEnv).length > 0) {
     body.cliEnv = options.cliEnv;
   }
@@ -85,12 +93,15 @@ export async function apiCursorRun(
 }
 
 /** 终止该会话在服务端运行的 Cursor CLI 子进程（含进程组，POSIX） */
-export async function apiCursorStop(sessionId: string): Promise<void> {
+export async function apiCursorStop(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): Promise<void> {
   const sid = String(sessionId || '').trim();
   await fetch('/api/cursor/stop', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId: sid }),
+    body: JSON.stringify({ sessionId: sid, ...(kind === 'qoder' ? { cliKind: 'qoder' } : {}) }),
   });
 }
 
@@ -139,10 +150,13 @@ export async function apiAppendCliWorkbenchChatMessage(
 }
 
 export async function fetchCursorRunStatus(
-  sessionId: string
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
 ): Promise<{ running: boolean; pid: number | null }> {
   const sid = String(sessionId || '').trim();
-  const r = await fetch(`/api/cursor/run-status?sessionId=${encodeURIComponent(sid)}`);
+  const q = new URLSearchParams({ sessionId: sid });
+  if (kind === 'qoder') q.set('cliKind', 'qoder');
+  const r = await fetch(`/api/cursor/run-status?${q}`);
   const data = await parseJson(r);
   if (!r.ok) {
     throw new Error(String(data.error || `查询子进程状态失败 (${r.status})`));

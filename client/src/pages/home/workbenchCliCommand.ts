@@ -1,9 +1,10 @@
 import {
   appendCursorAutoResume,
+  appendQoderAutoResume,
   buildAngleCliCommand,
   buildCliCommand,
 } from '../../cliSubstitute';
-import { CURSOR_CLI_DEFAULT_TEMPLATE } from '../../outputCatalog';
+import { CURSOR_CLI_DEFAULT_TEMPLATE, QODER_CLI_DEFAULT_TEMPLATE } from '../../outputCatalog';
 import { DEFAULT_CLI_TEMPLATE } from '../../workModes';
 import {
   cursorCliFillHint,
@@ -19,7 +20,7 @@ export function computeWorkbenchCliCommand(
   cursorFilePaths: { infoTxtAbs?: string; errorTxtAbs?: string } | null | undefined,
   externalThreadId = '',
   workspaceFallback = '',
-  cliOpts?: { skipCursorAutoResume?: boolean }
+  cliOpts?: { skipCursorAutoResume?: boolean; skipQoderAutoResume?: boolean }
 ) {
   if (!mode || mode.kind !== 'cli') return { error: '非 CLI 模式' };
   const text = String(paragraphText ?? '');
@@ -29,7 +30,9 @@ export function computeWorkbenchCliCommand(
   const tmpl =
     mode.cliVariant === 'cursor'
       ? mode.cliTemplate || CURSOR_CLI_DEFAULT_TEMPLATE
-      : mode.cliTemplate || DEFAULT_CLI_TEMPLATE;
+      : mode.cliVariant === 'qoder'
+        ? mode.cliTemplate || QODER_CLI_DEFAULT_TEMPLATE
+        : mode.cliTemplate || DEFAULT_CLI_TEMPLATE;
 
   if (mode.cliVariant === 'cursor') {
     const mergedSlots = getMergedCursorSlots(mode);
@@ -49,6 +52,26 @@ export function computeWorkbenchCliCommand(
       cliOpts?.skipCursorAutoResume === true
         ? built
         : appendCursorAutoResume(built, ctx.externalThreadId);
+    return { cmd };
+  }
+  if (mode.cliVariant === 'qoder') {
+    const mergedSlots = getMergedCursorSlots(mode);
+    const ctx = {
+      paragraph: text,
+      sessionId: sid,
+      workspace: ws,
+      cursorStdoutAbsPath: cursorFilePaths?.infoTxtAbs || '',
+      cursorStderrAbsPath: cursorFilePaths?.errorTxtAbs || '',
+      externalThreadId: String(externalThreadId ?? '').trim(),
+    };
+    if (!cursorCliReady(tmpl, mode.angleSlots || [], ctx)) {
+      return { error: cursorCliFillHint(tmpl, mode.angleSlots || [], ctx) };
+    }
+    const built = buildAngleCliCommand(tmpl, mergedSlots, ctx);
+    const cmd =
+      cliOpts?.skipQoderAutoResume === true
+        ? built
+        : appendQoderAutoResume(built, ctx.externalThreadId);
     return { cmd };
   }
   if (mode.cliVariant === 'xiaoai') {
@@ -80,7 +103,22 @@ export function consumeCursorOmitResumeAndBuildCommand(
   workspaceFallback: string,
   omitResumeNextInvokeRef: { current: boolean }
 ) {
-  const shouldOmit = mode?.cliVariant === 'cursor' && omitResumeNextInvokeRef.current;
+  if (mode?.cliVariant === 'qoder') {
+    const shouldOmit = omitResumeNextInvokeRef.current;
+    const computed = computeWorkbenchCliCommand(
+      mode,
+      paragraphText,
+      sessionId,
+      cursorFilePaths,
+      externalThreadId,
+      workspaceFallback,
+      shouldOmit ? { skipQoderAutoResume: true } : undefined
+    );
+    if (!computed.error && shouldOmit) omitResumeNextInvokeRef.current = false;
+    return computed;
+  }
+  const shouldOmit =
+    mode?.cliVariant === 'cursor' && omitResumeNextInvokeRef.current;
   const computed = computeWorkbenchCliCommand(
     mode,
     paragraphText,

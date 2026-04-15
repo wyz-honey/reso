@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export type CliWorkbenchKind = 'cursor' | 'qoder';
+
 /** `server/src/services` → `server/outputs/cursor`（其下按会话 ID 分子目录） */
 export function getCursorOutputRootResolved(): string {
   return path.resolve(
@@ -11,17 +13,39 @@ export function getCursorOutputRootResolved(): string {
   );
 }
 
-/** 会话输出目录绝对路径（不创建目录） */
-export function resolveCursorSessionDirAbs(sessionId: string): string {
-  const sid = String(sessionId || '').trim();
-  return path.join(getCursorOutputRootResolved(), sid);
+function getQoderOutputRootResolved(): string {
+  return path.resolve(
+    process.env.RESO_QODER_OUTPUT_DIR || path.join(__dirname, '..', '..', 'outputs', 'qoder')
+  );
 }
 
-/** 确保 `outputs/cursor/<sessionId>/` 存在；供 REST 与 WS 共用，避免终端重定向时父目录不存在 */
-export function ensureCursorSessionOutputDir(sessionId: string): string {
-  const dirAbs = resolveCursorSessionDirAbs(sessionId);
+export function getCliWorkbenchOutputRoot(kind: CliWorkbenchKind): string {
+  return kind === 'qoder' ? getQoderOutputRootResolved() : getCursorOutputRootResolved();
+}
+
+/** 会话输出目录绝对路径（不创建目录） */
+export function resolveCliWorkbenchSessionDirAbs(sessionId: string, kind: CliWorkbenchKind): string {
+  const sid = String(sessionId || '').trim();
+  return path.join(getCliWorkbenchOutputRoot(kind), sid);
+}
+
+export function resolveCursorSessionDirAbs(sessionId: string): string {
+  return resolveCliWorkbenchSessionDirAbs(sessionId, 'cursor');
+}
+
+/** 确保 `outputs/<cursor|qoder>/<sessionId>/` 存在；供 REST 与 WS 共用 */
+export function ensureCliWorkbenchSessionOutputDir(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): string {
+  const dirAbs = resolveCliWorkbenchSessionDirAbs(sessionId, kind);
   fs.mkdirSync(dirAbs, { recursive: true });
   return dirAbs;
+}
+
+/** @deprecated 使用 ensureCliWorkbenchSessionOutputDir(sessionId, 'cursor') */
+export function ensureCursorSessionOutputDir(sessionId: string): string {
+  return ensureCliWorkbenchSessionOutputDir(sessionId, 'cursor');
 }
 
 export function readCursorSessionFilesSync(dirAbs: string): { info: string; error: string } {

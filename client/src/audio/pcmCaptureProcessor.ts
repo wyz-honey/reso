@@ -8,6 +8,21 @@ function floatTo16BitPCM(input: Float32Array): Uint8Array {
   return new Uint8Array(buf);
 }
 
+/** 一阶高通 + 去直流，削弱低频哼声与环境隆隆声（轻量预处理，非专业降噪算法） */
+function mildPreEmphasisHp(samples: Float32Array, sampleRate: number): void {
+  if (samples.length < 2 || sampleRate <= 0) return;
+  const fc = 90;
+  const alpha = Math.exp(-((2 * Math.PI * fc) / sampleRate));
+  let hp = 0;
+  let prevX = samples[0];
+  for (let i = 0; i < samples.length; i++) {
+    const x = samples[i];
+    hp = alpha * (hp + x - prevX);
+    prevX = x;
+    samples[i] = hp;
+  }
+}
+
 function downsampleTo16kPcm(buffer: Float32Array, inputSampleRate: number): Uint8Array {
   const outputSampleRate = 16000;
   if (inputSampleRate === outputSampleRate) {
@@ -63,6 +78,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
     while (this.len >= this.chunkIn) {
       const slice = this.buf.subarray(0, this.chunkIn);
+      mildPreEmphasisHp(slice, this.inRate);
       const pcm = downsampleTo16kPcm(slice, this.inRate);
       this.port.postMessage({ pcm }, [pcm.buffer]);
 

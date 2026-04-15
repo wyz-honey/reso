@@ -33,9 +33,14 @@ export type AsrConnectOptions = {
   languageHints?: string[];
   /** VAD 断句静音阈值 ms，范围 200–6000，默认由服务端决定 */
   maxSentenceSilenceMs?: number;
+  /**
+   * Paraformer v2+：长连接下持续发静音时保持任务不超时断开（百炼文档 heartbeat）。
+   * 默认 true；设为 false 可关闭。
+   */
+  heartbeatEnabled?: boolean;
 };
 
-function buildAsrParameters(opts?: AsrConnectOptions): Record<string, unknown> {
+function buildAsrParameters(opts?: AsrConnectOptions, modelId?: string): Record<string, unknown> {
   const base: Record<string, unknown> = {
     format: 'pcm',
     sample_rate: 16000,
@@ -48,6 +53,10 @@ function buildAsrParameters(opts?: AsrConnectOptions): Record<string, unknown> {
   const ms = opts?.maxSentenceSilenceMs;
   if (typeof ms === 'number' && ms >= 200 && ms <= 6000) {
     base.max_sentence_silence = Math.round(ms);
+  }
+  const mid = String(modelId || '');
+  if (opts?.heartbeatEnabled !== false && /v2/i.test(mid)) {
+    base.heartbeat = true;
   }
   return base;
 }
@@ -76,7 +85,7 @@ export function connectDashScope(
       task: 'asr',
       function: 'recognition',
       model,
-      parameters: buildAsrParameters(asrOptions),
+      parameters: buildAsrParameters(asrOptions, model),
       input: {},
     },
   };

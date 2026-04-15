@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// @ts-nocheck — page state lives in Zustand; shallow selector typing deferred
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   apiCreateQuickInput,
   apiDeleteQuickInput,
@@ -6,6 +8,8 @@ import {
   fetchQuickInputs,
 } from '../api';
 import '../App.css';
+import { AppModalShell } from '@/components/ui/AppModalShell';
+import { emptyForm, useQuickInputsPageStore } from '../stores/quickInputsPageStore';
 
 function notifyQuickInputsChanged() {
   try {
@@ -15,20 +19,53 @@ function notifyQuickInputsChanged() {
   }
 }
 
-const emptyForm = { label: '', content: '', sort_order: '' };
-
 export default function QuickInputsPage() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [msg, setMsg] = useState('');
-  const [form, setForm] = useState(emptyForm);
-  const [editingId, setEditingId] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [formModalOpen, setFormModalOpen] = useState(false);
+  const {
+    items,
+    setItems,
+    loading,
+    setLoading,
+    error,
+    setError,
+    msg,
+    setMsg,
+    form,
+    setForm,
+    editingId,
+    setEditingId,
+    busy,
+    setBusy,
+    formModalOpen,
+    setFormModalOpen,
+    searchInput,
+    setSearchInput,
+    searchQ,
+    setSearchQ,
+  } = useQuickInputsPageStore(
+    useShallow((s) => ({
+      items: s.items,
+      setItems: s.setItems,
+      loading: s.loading,
+      setLoading: s.setLoading,
+      error: s.error,
+      setError: s.setError,
+      msg: s.msg,
+      setMsg: s.setMsg,
+      form: s.form,
+      setForm: s.setForm,
+      editingId: s.editingId,
+      setEditingId: s.setEditingId,
+      busy: s.busy,
+      setBusy: s.setBusy,
+      formModalOpen: s.formModalOpen,
+      setFormModalOpen: s.setFormModalOpen,
+      searchInput: s.searchInput,
+      setSearchInput: s.setSearchInput,
+      searchQ: s.searchQ,
+      setSearchQ: s.setSearchQ,
+    }))
+  );
   const modalCardRef = useRef(null);
-  const [searchInput, setSearchInput] = useState('');
-  const [searchQ, setSearchQ] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +79,7 @@ export default function QuickInputsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setError, setItems, setLoading]);
 
   useEffect(() => {
     load();
@@ -51,7 +88,7 @@ export default function QuickInputsPage() {
   useEffect(() => {
     const t = setTimeout(() => setSearchQ(searchInput.trim()), 320);
     return () => clearTimeout(t);
-  }, [searchInput]);
+  }, [searchInput, setSearchQ]);
 
   const filteredItems = useMemo(() => {
     if (!searchQ) return items;
@@ -66,21 +103,12 @@ export default function QuickInputsPage() {
     setFormModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
-  }, []);
+  }, [setEditingId, setForm, setFormModalOpen]);
 
   const cancelModal = useCallback(() => {
     closeFormModal();
     setMsg('');
-  }, [closeFormModal]);
-
-  useEffect(() => {
-    if (!formModalOpen) return;
-    const onKey = (e) => {
-      if (e.key === 'Escape') cancelModal();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [formModalOpen, cancelModal]);
+  }, [closeFormModal, setMsg]);
 
   useEffect(() => {
     if (!formModalOpen) return;
@@ -280,30 +308,18 @@ export default function QuickInputsPage() {
         </div>
       </div>
 
-      {formModalOpen ? (
-        <div
-          className="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="quick-input-modal-title"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              cancelModal();
-            }
-          }}
-        >
-          <div
-            ref={modalCardRef}
-            className="modal-card modal-card--wide"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="quick-input-modal-title" className="modal-title">
-              {editingId ? '编辑快捷上下文' : '新建快捷上下文'}
-            </h2>
-            <p className="modal-desc">
-              工作台正文上方以标签展示；点击标签插入到光标处（未聚焦编辑区时追加到末尾）。
-            </p>
-            <form className="modal-form" onSubmit={editingId ? onUpdate : onCreate}>
+      <AppModalShell
+        open={formModalOpen}
+        onOpenChange={(next) => {
+          if (!next) cancelModal();
+        }}
+        titleId="quick-input-modal-title"
+        title={editingId ? '编辑快捷上下文' : '新建快捷上下文'}
+        description="工作台正文上方以标签展示；点击标签插入到光标处（未聚焦编辑区时追加到末尾）。"
+        contentClassName="modal-card--wide sm:max-w-[min(96vw,720px)]"
+      >
+        <div ref={modalCardRef}>
+          <form className="modal-form" onSubmit={editingId ? onUpdate : onCreate}>
               <label className="modal-label">
                 标签（工作台显示为 tag）
                 <input
@@ -353,9 +369,8 @@ export default function QuickInputsPage() {
                 )}
               </div>
             </form>
-          </div>
         </div>
-      ) : null}
+      </AppModalShell>
     </div>
   );
 }

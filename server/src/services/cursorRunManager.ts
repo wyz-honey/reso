@@ -5,10 +5,15 @@ import {
   CURSOR_RUN_MAX_COMMAND_CHARS,
   CURSOR_RUN_STOP_SIGKILL_AFTER_MS,
 } from '~/constants/cursorWorkbench.ts';
+import type { CliWorkbenchKind } from '~/services/cursorPaths.ts';
 
 type RunEntry = { child: ChildProcess };
 
 const runs = new Map<string, RunEntry>();
+
+function runMapKey(sessionId: string, kind: CliWorkbenchKind): string {
+  return `${String(sessionId || '').trim()}:${kind}`;
+}
 
 function killProcessTree(child: ChildProcess): void {
   const pid = child.pid;
@@ -67,15 +72,15 @@ function spawnShellCommand(command: string, env: NodeJS.ProcessEnv): ChildProces
   });
 }
 
-function attachExitCleanup(sessionId: string, child: ChildProcess): void {
+function attachExitCleanup(mapKey: string, child: ChildProcess): void {
   const done = () => {
-    const cur = runs.get(sessionId);
-    if (cur?.child === child) runs.delete(sessionId);
+    const cur = runs.get(mapKey);
+    if (cur?.child === child) runs.delete(mapKey);
   };
   child.once('exit', (code, signal) => {
     done();
     serviceLog('cursor-run', 'subprocess exit', {
-      sessionId,
+      mapKey,
       code,
       signal: signal ?? undefined,
     });
@@ -83,20 +88,26 @@ function attachExitCleanup(sessionId: string, child: ChildProcess): void {
   child.once('error', (err) => {
     done();
     serviceWarn('cursor-run', 'subprocess error', {
-      sessionId,
+      mapKey,
       message: err instanceof Error ? err.message : String(err),
     });
   });
 }
 
-export function getCursorRunStatus(sessionId: string): { running: boolean; pid: number | null } {
-  const e = runs.get(sessionId);
+export function getCursorRunStatus(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): { running: boolean; pid: number | null } {
+  const e = runs.get(runMapKey(sessionId, kind));
   if (!e) return { running: false, pid: null };
   return { running: true, pid: e.child.pid ?? null };
 }
 
-export function stopCursorRun(sessionId: string): { ok: boolean; message?: string } {
-  const e = runs.get(sessionId);
+export function stopCursorRun(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): { ok: boolean; message?: string } {
+  const e = runs.get(runMapKey(sessionId, kind));
   if (!e) return { ok: false, message: 'not running' };
   killProcessTree(e.child);
   return { ok: true };
@@ -109,7 +120,8 @@ export function stopCursorRun(sessionId: string): { ok: boolean; message?: strin
 export function startCursorRun(
   sessionId: string,
   command: string,
-  envFill?: Record<string, string>
+  envFill?: Record<string, string>,
+  kind: CliWorkbenchKind = 'cursor'
 ): { ok: true; pid: number } | { ok: false; error: string } {
   const cmd = String(command ?? '').trim();
   if (cmd.length === 0) return { ok: false, error: 'empty command' };
@@ -117,7 +129,8 @@ export function startCursorRun(
     return { ok: false, error: 'command too long' };
   }
 
-  stopCursorRun(sessionId);
+  const mapKey = runMapKey(sessionId, kind);
+  stopCursorRun(sessionId, kind);
 
   const env = mergeProcessEnvFillMissing(process.env, envFill || {});
 
@@ -133,15 +146,18 @@ export function startCursorRun(
     return { ok: false, error: 'spawn returned no pid' };
   }
 
-  runs.set(sessionId, { child });
-  attachExitCleanup(sessionId, child);
+  runs.set(mapKey, { child });
+  attachExitCleanup(mapKey, child);
 
-  serviceLog('cursor-run', 'subprocess started', { sessionId, pid: child.pid });
+  serviceLog('cursor-run', 'subprocess started', { sessionId, cliKind: kind, pid: child.pid });
   return { ok: true, pid: child.pid };
 }
 
 export function stopAllCursorRuns(): void {
-  for (const sid of [...runs.keys()]) {
-    stopCursorRun(sid);
+  for (const mapKey of [...runs.keys()]) {
+    const idx = mapKey.lastIndexOf(':');
+    const sid = idx === -1 ? mapKey : mapKey.slice(0, idx);
+    const kind = (idx === -1 ? 'cursor' : mapKey.slice(idx + 1)) as CliWorkbenchKind;
+    stopCursorRun(sid, kind === 'qoder' ? 'qoder' : 'cursor');
   }
 }

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+// @ts-nocheck — page state lives in Zustand; shallow selector typing deferred
+import { useCallback, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   apiBatchDeleteSessions,
   apiCreateSession,
@@ -7,6 +9,7 @@ import {
   fetchSessionList,
 } from '../api';
 import '../App.css';
+import { useSessionsPageStore } from '../stores/sessionsPageStore';
 
 function formatTime(iso) {
   if (!iso) return '—';
@@ -25,28 +28,99 @@ const PARA_PAGE_OPTIONS = [10, 20, 50];
 const BATCH_DELETE_LIMIT = 100;
 
 export default function SessionsPage() {
-  const [list, setList] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [searchInput, setSearchInput] = useState('');
-  const [searchQ, setSearchQ] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [view, setView] = useState('list');
-  const [detailId, setDetailId] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [paraSearchInput, setParaSearchInput] = useState('');
-  const [paraSearchQ, setParaSearchQ] = useState('');
-  const [paraPage, setParaPage] = useState(1);
-  const [paraPageSize, setParaPageSize] = useState(10);
-  const [detailRefreshing, setDetailRefreshing] = useState(false);
-  const [copiedParaId, setCopiedParaId] = useState(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const {
+    list,
+    setList,
+    total,
+    setTotal,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    searchInput,
+    setSearchInput,
+    searchQ,
+    setSearchQ,
+    filter,
+    setFilter,
+    loading,
+    setLoading,
+    error,
+    setError,
+    view,
+    setView,
+    detailId,
+    setDetailId,
+    detail,
+    setDetail,
+    detailLoading,
+    setDetailLoading,
+    busy,
+    setBusy,
+    msg,
+    setMsg,
+    paraSearchInput,
+    setParaSearchInput,
+    paraSearchQ,
+    setParaSearchQ,
+    paraPage,
+    setParaPage,
+    paraPageSize,
+    setParaPageSize,
+    detailRefreshing,
+    setDetailRefreshing,
+    copiedParaId,
+    setCopiedParaId,
+    selectedIds,
+    setSelectedIds,
+  } = useSessionsPageStore(
+    useShallow((s) => ({
+      list: s.list,
+      setList: s.setList,
+      total: s.total,
+      setTotal: s.setTotal,
+      page: s.page,
+      setPage: s.setPage,
+      pageSize: s.pageSize,
+      setPageSize: s.setPageSize,
+      searchInput: s.searchInput,
+      setSearchInput: s.setSearchInput,
+      searchQ: s.searchQ,
+      setSearchQ: s.setSearchQ,
+      filter: s.filter,
+      setFilter: s.setFilter,
+      loading: s.loading,
+      setLoading: s.setLoading,
+      error: s.error,
+      setError: s.setError,
+      view: s.view,
+      setView: s.setView,
+      detailId: s.detailId,
+      setDetailId: s.setDetailId,
+      detail: s.detail,
+      setDetail: s.setDetail,
+      detailLoading: s.detailLoading,
+      setDetailLoading: s.setDetailLoading,
+      busy: s.busy,
+      setBusy: s.setBusy,
+      msg: s.msg,
+      setMsg: s.setMsg,
+      paraSearchInput: s.paraSearchInput,
+      setParaSearchInput: s.setParaSearchInput,
+      paraSearchQ: s.paraSearchQ,
+      setParaSearchQ: s.setParaSearchQ,
+      paraPage: s.paraPage,
+      setParaPage: s.setParaPage,
+      paraPageSize: s.paraPageSize,
+      setParaPageSize: s.setParaPageSize,
+      detailRefreshing: s.detailRefreshing,
+      setDetailRefreshing: s.setDetailRefreshing,
+      copiedParaId: s.copiedParaId,
+      setCopiedParaId: s.setCopiedParaId,
+      selectedIds: s.selectedIds,
+      setSelectedIds: s.setSelectedIds,
+    }))
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setSearchQ(searchInput.trim()), 320);

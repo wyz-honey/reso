@@ -1,8 +1,9 @@
 import path from 'path';
 import { Router } from 'express';
 import {
-  ensureCursorSessionOutputDir,
-  getCursorOutputRootResolved,
+  ensureCliWorkbenchSessionOutputDir,
+  getCliWorkbenchOutputRoot,
+  type CliWorkbenchKind,
 } from '~/services/cursorPaths.ts';
 import {
   getCursorRunStatus,
@@ -12,6 +13,12 @@ import {
 import { parseCliEnvPayload } from '~/utils/cliEnvMerge.ts';
 import { isValidUuid } from '~/utils/validation.ts';
 
+function parseCliWorkbenchKind(raw: unknown): CliWorkbenchKind {
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  const s = String(first ?? '').trim().toLowerCase();
+  return s === 'qoder' ? 'qoder' : 'cursor';
+}
+
 export function createCursorRouter(): Router {
   const r = Router();
 
@@ -19,11 +26,12 @@ export function createCursorRouter(): Router {
   r.post('/api/cursor/run', (req, res) => {
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
     const command = typeof req.body?.command === 'string' ? req.body.command : '';
+    const cliKind = parseCliWorkbenchKind(req.body?.cliKind);
     if (!isValidUuid(sessionId)) {
       return res.status(400).json({ error: 'Invalid or missing sessionId' });
     }
     const cliEnv = parseCliEnvPayload(req.body?.cliEnv);
-    const out = startCursorRun(sessionId, command, cliEnv);
+    const out = startCursorRun(sessionId, command, cliEnv, cliKind);
     if (!out.ok) {
       return res.status(400).json({ error: out.error });
     }
@@ -32,32 +40,35 @@ export function createCursorRouter(): Router {
 
   r.post('/api/cursor/stop', (req, res) => {
     const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId.trim() : '';
+    const cliKind = parseCliWorkbenchKind(req.body?.cliKind);
     if (!isValidUuid(sessionId)) {
       return res.status(400).json({ error: 'Invalid or missing sessionId' });
     }
-    const out = stopCursorRun(sessionId);
+    const out = stopCursorRun(sessionId, cliKind);
     return res.json({ ok: true, stopped: out.ok });
   });
 
   r.get('/api/cursor/run-status', (req, res) => {
     const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId.trim() : '';
+    const cliKind = parseCliWorkbenchKind(req.query.cliKind);
     if (!isValidUuid(sessionId)) {
       return res.status(400).json({ error: 'Invalid or missing sessionId' });
     }
-    const st = getCursorRunStatus(sessionId);
+    const st = getCursorRunStatus(sessionId, cliKind);
     return res.json(st);
   });
 
   r.get('/api/cursor/session-paths', (req, res) => {
     const sessionId = req.query.sessionId;
+    const cliKind = parseCliWorkbenchKind(req.query.cliKind);
     if (typeof sessionId !== 'string' || !isValidUuid(sessionId.trim())) {
       return res.status(400).json({ error: 'Invalid or missing sessionId' });
     }
     const sid = sessionId.trim();
-    const root = getCursorOutputRootResolved();
+    const root = getCliWorkbenchOutputRoot(cliKind);
     let dirAbs: string;
     try {
-      dirAbs = ensureCursorSessionOutputDir(sid);
+      dirAbs = ensureCliWorkbenchSessionOutputDir(sid, cliKind);
     } catch (e) {
       return res.status(500).json({
         error: e instanceof Error ? e.message : 'Failed to create cursor output directory',

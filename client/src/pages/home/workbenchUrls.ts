@@ -32,3 +32,20 @@ export function cursorTailWsUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${window.location.host}/ws/cursor-tail`;
 }
+
+export function uiControlWsUrl() {
+  if (typeof __RESO_DEV_UI_CONTROL_WS_URL__ === 'string' && __RESO_DEV_UI_CONTROL_WS_URL__) {
+    return __RESO_DEV_UI_CONTROL_WS_URL__;
+  }
+  if (import.meta.env.VITE_WS_URL) {
+    try {
+      const base = new URL(import.meta.env.VITE_WS_URL);
+      base.pathname = '/ws/ui-control';
+      return base.toString();
+    } catch {
+      /* fall through */
+    }
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws/ui-control`;
+}

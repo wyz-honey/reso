@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { AppModalShell } from '@/components/ui/AppModalShell';
 import CliInstructionHeader from '../../components/CliInstructionHeader';
 import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../../cliSubstitute';
 import { DEFAULT_CLI_TEMPLATE } from '../../workModes';
@@ -19,31 +20,26 @@ export default function HomeWorkbenchAddModeModal({ customModes, onSubmit, onDel
   const setNewXiaoaiTemplate = useHomeWorkbenchUiStore((s) => s.setNewXiaoaiTemplate);
   const setNewCliAngleSlotsPreset = useHomeWorkbenchUiStore((s) => s.setNewCliAngleSlotsPreset);
 
-  if (!modeModalOpen) return null;
+  const closeModal = () => {
+    setModeModalOpen(false);
+    setNewCliAngleSlotsPreset(null);
+  };
 
   return (
-    <div
-      className="modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mode-modal-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          setModeModalOpen(false);
-          setNewCliAngleSlotsPreset(null);
-        }
+    <AppModalShell
+      open={modeModalOpen}
+      onOpenChange={(next) => {
+        if (!next) closeModal();
       }}
+      titleId="mode-modal-title"
+      title="添加自定义目标"
+      description={
+        newModeKind === 'xiaoai'
+          ? 'CLI：完整指令可用尖括号占位与 {{变量}}；点「示例」可载入默认命令且占位均为自定义。仅保存在本机浏览器。'
+          : 'HTTP：向指定 URL POST JSON（OpenAI Chat 或 AGUI 体）。仅保存在本机浏览器。'
+      }
     >
-      <div className="modal-card">
-        <h2 id="mode-modal-title" className="modal-title">
-          添加自定义目标
-        </h2>
-        <p className="modal-desc">
-          {newModeKind === 'xiaoai'
-            ? 'CLI：完整指令可用尖括号占位与 {{变量}}；点「示例」可载入默认命令且占位均为自定义。仅保存在本机浏览器。'
-            : 'HTTP：向指定 URL POST JSON（OpenAI Chat 或 AGUI 体）。仅保存在本机浏览器。'}
-        </p>
-        <form onSubmit={onSubmit} className="modal-form">
+      <form onSubmit={onSubmit} className="modal-form">
           <label className="modal-label">
             类型
             <select
@@ -125,14 +121,7 @@ export default function HomeWorkbenchAddModeModal({ customModes, onSubmit, onDel
             </div>
           )}
           <div className="modal-actions">
-            <button
-              type="button"
-              className="btn-clear"
-              onClick={() => {
-                setModeModalOpen(false);
-                setNewCliAngleSlotsPreset(null);
-              }}
-            >
+            <button type="button" className="btn-clear" onClick={closeModal}>
               取消
             </button>
             <button type="submit" className="btn-copy">
@@ -151,12 +140,14 @@ export default function HomeWorkbenchAddModeModal({ customModes, onSubmit, onDel
                     <span className="modal-custom-kind">
                       {m.kind === 'http'
                         ? ' · HTTP'
-                        : m.kind === 'cli'
+                          : m.kind === 'cli'
                           ? m.cliVariant === 'xiaoai'
                             ? ' · CLI'
                             : m.cliVariant === 'cursor'
                               ? ' · Cursor'
-                              : ' · CLI(旧)'
+                              : m.cliVariant === 'qoder'
+                                ? ' · Qoder'
+                                : ' · CLI(旧)'
                           : ' · RESO'}
                     </span>
                   </span>
@@ -168,7 +159,6 @@ export default function HomeWorkbenchAddModeModal({ customModes, onSubmit, onDel
             </ul>
           </div>
         ) : null}
-      </div>
-    </div>
+    </AppModalShell>
   );
 }

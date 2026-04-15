@@ -14,6 +14,40 @@ export function cliCommandHasResumeFlag(cmd: unknown): boolean {
   return /(?:^|[\s\\])--resume(?:\s|=|$)/.test(String(cmd ?? ''));
 }
 
+/** Qoder：是否已含 `-r` / `--resume` 风格会话参数（避免重复插入） */
+export function cliCommandHasQoderResumeFlag(cmd: unknown): boolean {
+  return /(?:^|[\s\\])-r(?:\s+|=|$)/.test(String(cmd ?? ''));
+}
+
+/**
+ * Qoder：在首个输出重定向行（`>`）之前插入 `-r '<sessionId>'`（与官方文档「恢复指定会话」一致）；
+ * 已有 `-r` 时不改。参见 https://docs.qoder.com/zh/cli/using-cli
+ */
+export function appendQoderAutoResume(cmd: unknown, resumeId: unknown): string {
+  const c = String(cmd ?? '');
+  const id = String(resumeId ?? '').trim();
+  if (!id || cliCommandHasQoderResumeFlag(c)) return c;
+  const q = shellQuoteSingle(id);
+  const t = c.trimEnd();
+  const lines = t.split(/\r?\n/);
+  let redirectLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*2\s*>/.test(lines[i])) continue;
+    if (/^\s*>/.test(lines[i])) {
+      redirectLineIdx = i;
+      break;
+    }
+  }
+  if (redirectLineIdx >= 0) {
+    const before = lines.slice(0, redirectLineIdx).join('\n');
+    const after = lines.slice(redirectLineIdx).join('\n');
+    return before ? `${before} -r ${q} \\\n${after}` : `${t} -r ${q}`;
+  }
+  const m = t.match(/^([\s\S]+?)(\s+>[\s\S]+)$/);
+  if (m) return `${m[1]} -r ${q}${m[2]}`;
+  return `${t} -r ${q}`;
+}
+
 /**
  * Cursor：在复制/发送的最终命令上自动插入 `--resume '<threadId>'`，放在首个输出重定向行（`>`）之前；
  * 无重定向行则插在末尾。已有 --resume 时不改。

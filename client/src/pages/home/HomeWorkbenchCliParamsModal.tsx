@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { AppModalShell } from '@/components/ui/AppModalShell';
 import CliAngleSlotsEditor from '../../components/CliAngleSlotsEditor';
 import CliEnvEditor from '../../components/CliEnvEditor';
 import CliInstructionHeader from '../../components/CliInstructionHeader';
@@ -14,7 +15,7 @@ import {
 export default function HomeWorkbenchCliParamsModal({
   open,
   onClose,
-  isCursorCli,
+  isCliWorkbench,
   isXiaoaiCli,
   cursorWorkbenchTriadLabels,
   cliWorkspaceFallbackStr,
@@ -27,23 +28,17 @@ export default function HomeWorkbenchCliParamsModal({
   applyWorkbenchCliExample,
   onCliEnvChange,
 }) {
-  if (!open) return null;
-
   return (
-    <div
-      className="modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="cli-params-modal-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+    <AppModalShell
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
       }}
+      titleId="cli-params-modal-title"
+      title="CLI 入参配置"
+      contentClassName="modal-card--cli-params sm:max-w-[min(96vw,720px)]"
     >
-      <div className="modal-card modal-card--cli-params" onClick={(e) => e.stopPropagation()}>
-        <h2 id="cli-params-modal-title" className="modal-title">
-          CLI 入参配置
-        </h2>
-        {isCursorCli ? (
+      {isCliWorkbench ? (
           <div className="cli-params-modal-body">
             {cursorWorkbenchTriadLabels.length === 0 ? (
               <p className="cli-params-cursor-empty">
@@ -191,7 +186,6 @@ export default function HomeWorkbenchCliParamsModal({
             完成
           </button>
         </div>
-      </div>
-    </div>
+    </AppModalShell>
   );
 }

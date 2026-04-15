@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { NavLink } from 'react-router-dom';
 import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
@@ -13,20 +14,20 @@ import {
   setDefaultModelIds,
   updateProvider,
 } from '../stores/modelProvidersStore';
+import { useModelProvidersPageUiStore } from '../stores/modelProvidersPageUiStore';
 import '../App.css';
 
 export default function ModelProvidersPage() {
-  const [tick, setTick] = useState(0);
-  const [msg, setMsg] = useState('');
-  const [newModel, setNewModel] = useState<{
-    category: ModelCategory;
-    apiModelId: string;
-    label: string;
-  }>({
-    category: MODEL_CATEGORIES.chat,
-    apiModelId: '',
-    label: '',
-  });
+  const { tick, setTick, msg, setMsg, newModel, setNewModel } = useModelProvidersPageUiStore(
+    useShallow((s) => ({
+      tick: s.tick,
+      setTick: s.setTick,
+      msg: s.msg,
+      setMsg: s.setMsg,
+      newModel: s.newModel,
+      setNewModel: s.setNewModel,
+    }))
+  );
 
   useEffect(() => {
     const fn = () => setTick((t) => t + 1);

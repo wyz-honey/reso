@@ -1,6 +1,9 @@
 /** 与客户端 constants/builtins CURSOR_EXTERNAL_THREAD_PROVIDER 保持一致 */
 export const CURSOR_EXTERNAL_THREAD_PROVIDER = 'cursor_agent';
 
+/** 与客户端 QODER_EXTERNAL_THREAD_PROVIDER 一致 */
+export const QODER_EXTERNAL_THREAD_PROVIDER = 'qoder_agent';
+
 /** /ws/cursor-tail：目录 watch 后的合并推送间隔 */
 export const CURSOR_TAIL_WS_DEBOUNCE_MS = 50;
 

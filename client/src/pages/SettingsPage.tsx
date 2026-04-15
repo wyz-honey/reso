@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { NavLink } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
   MODEL_CATEGORY_LABELS,
@@ -8,20 +9,35 @@ import {
   useModelProvidersStore,
 } from '../stores/modelProvidersStore';
 import { getVoiceSettings, saveVoiceSettings } from '../stores/voiceSettingsStore';
+import { useSettingsPageStore } from '../stores/settingsPageStore';
 import '../App.css';
 
 export default function SettingsPage() {
-  const [asrDisfluencyRemoval, setAsrDisfluencyRemoval] = useState(
-    () => getVoiceSettings().asrDisfluencyRemoval
+  const {
+    asrDisfluencyRemoval,
+    setAsrDisfluencyRemoval,
+    asrLanguageHintsText,
+    setAsrLanguageHintsText,
+    oralStripEnabled,
+    setOralStripEnabled,
+    oralStripPhrasesText,
+    setOralStripPhrasesText,
+    savedFlash,
+    setSavedFlash,
+  } = useSettingsPageStore(
+    useShallow((s) => ({
+      asrDisfluencyRemoval: s.asrDisfluencyRemoval,
+      setAsrDisfluencyRemoval: s.setAsrDisfluencyRemoval,
+      asrLanguageHintsText: s.asrLanguageHintsText,
+      setAsrLanguageHintsText: s.setAsrLanguageHintsText,
+      oralStripEnabled: s.oralStripEnabled,
+      setOralStripEnabled: s.setOralStripEnabled,
+      oralStripPhrasesText: s.oralStripPhrasesText,
+      setOralStripPhrasesText: s.setOralStripPhrasesText,
+      savedFlash: s.savedFlash,
+      setSavedFlash: s.setSavedFlash,
+    }))
   );
-  const [asrLanguageHintsText, setAsrLanguageHintsText] = useState(
-    () => getVoiceSettings().asrLanguageHintsText
-  );
-  const [oralStripEnabled, setOralStripEnabled] = useState(() => getVoiceSettings().oralStripEnabled);
-  const [oralStripPhrasesText, setOralStripPhrasesText] = useState(
-    () => getVoiceSettings().oralStripPhrasesText
-  );
-  const [savedFlash, setSavedFlash] = useState(false);
 
   const models = useModelProvidersStore((s) => s.models);
   const speechModelId = useModelProvidersStore((s) => s.defaults.speechModelId);

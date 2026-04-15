@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { NavLink, Route, Routes } from 'react-router-dom';
+import LeaveWorkbenchListeningModal from './components/LeaveWorkbenchListeningModal';
+import WorkbenchGuardedNavLink from './components/WorkbenchGuardedNavLink';
 import HomePage from './pages/HomePage';
 import OutputsPage from './pages/OutputsPage';
 import OutputDetailPage from './pages/OutputDetailPage';
@@ -9,18 +12,11 @@ import QuickInputsPage from './pages/QuickInputsPage';
 import SessionsPage from './pages/SessionsPage';
 import TasksPage from './pages/TasksPage';
 import TaskDetailPage from './pages/TaskDetailPage';
+import DrawingPage from './pages/DrawingPage';
 import ClientSettingsDbSync from './components/ClientSettingsDbSync';
+import { AgentRemoteUiBridge } from './components/AgentRemoteUiBridge';
 import './App.css';
-
-const SIDEBAR_COLLAPSED_KEY = 'reso_sidebar_collapsed_v1';
-
-function loadSidebarCollapsed() {
-  try {
-    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
+import { persistNavCollapsed, useAppShellStore } from './stores/appShellStore';
 
 /** 工作台：四宫格面板 */
 function IconWorkbench() {
@@ -114,19 +110,17 @@ function IconChevronRight() {
 }
 
 export default function App() {
-  const [navCollapsed, setNavCollapsed] = useState(loadSidebarCollapsed);
+  const { navCollapsed, setNavCollapsed } = useAppShellStore(
+    useShallow((s) => ({ navCollapsed: s.navCollapsed, setNavCollapsed: s.setNavCollapsed }))
+  );
 
   useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, navCollapsed ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
+    persistNavCollapsed(navCollapsed);
   }, [navCollapsed]);
 
   const toggleNav = useCallback(() => {
     setNavCollapsed((c) => !c);
-  }, []);
+  }, [setNavCollapsed]);
 
   return (
     <div className={`shell ${navCollapsed ? 'shell--nav-collapsed' : ''}`}>
@@ -143,36 +137,39 @@ export default function App() {
           </NavLink>
           <div className="sidebar-nav-group">
             <div className="sidebar-nav-label">输入</div>
-            <NavLink to="/sessions" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <WorkbenchGuardedNavLink to="/sessions" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <IconConversation />
               <span className="nav-link-label">会话</span>
-            </NavLink>
-            <NavLink to="/quick-inputs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            </WorkbenchGuardedNavLink>
+            <WorkbenchGuardedNavLink
+              to="/quick-inputs"
+              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+            >
               <IconQuick />
               <span className="nav-link-label">快捷上下文</span>
-            </NavLink>
-            <NavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            </WorkbenchGuardedNavLink>
+            <WorkbenchGuardedNavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <IconTasks />
               <span className="nav-link-label">任务</span>
-            </NavLink>
+            </WorkbenchGuardedNavLink>
           </div>
           <div className="sidebar-nav-group">
             <div className="sidebar-nav-label">输出</div>
-            <NavLink
+            <WorkbenchGuardedNavLink
               to="/outputs"
               end
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               <IconTarget />
               <span className="nav-link-label">目标管理</span>
-            </NavLink>
+            </WorkbenchGuardedNavLink>
           </div>
           <div className="sidebar-nav-group">
             <div className="sidebar-nav-label">系统</div>
-            <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <WorkbenchGuardedNavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <IconSliders />
               <span className="nav-link-label">设置</span>
-            </NavLink>
+            </WorkbenchGuardedNavLink>
           </div>
         </nav>
         <button
@@ -187,6 +184,8 @@ export default function App() {
         </button>
       </aside>
       <main className="main-content">
+        <AgentRemoteUiBridge />
+        <LeaveWorkbenchListeningModal />
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/quick-inputs" element={<QuickInputsPage />} />
@@ -197,6 +196,7 @@ export default function App() {
           <Route path="/outputs" element={<OutputsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/model-providers" element={<ModelProvidersPage />} />
+          <Route path="/drawing" element={<DrawingPage />} />
         </Routes>
       </main>
     </div>

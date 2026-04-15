@@ -1,12 +1,9 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { NavLink, useParams } from 'react-router-dom';
 import OutputVoiceControlSection from '../components/OutputVoiceControlSection';
-import {
-  parseOutputVoiceControl,
-  serializeOutputVoiceControl,
-  type OutputVoiceControl,
-} from '../outputVoiceControl';
+import { serializeOutputVoiceControl } from '../outputVoiceControl';
 import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import {
   CURSOR_CLI_DEFAULT_TEMPLATE,
@@ -22,6 +19,9 @@ import { buildAllCustomAngleSlots, mergeAngleSlotsWithDefaults } from '../cliSub
 import { deriveCursorCliWorkspace } from '../cursorTriad';
 import ResoAgentPage from './ResoAgentPage';
 import '../App.css';
+import { useOutputDetailShellStore } from '../stores/outputDetailShellStore';
+import { useOutputDetailCursorStore } from '../stores/outputDetailCursorStore';
+import { useOutputDetailAsrBuiltinStore } from '../stores/outputDetailAsrBuiltinStore';
 
 function formatTs(iso) {
   if (!iso || typeof iso !== 'string') return '—';
@@ -31,54 +31,78 @@ function formatTs(iso) {
 }
 
 function CursorOutputDetail({ row, onSaved }) {
-  const ext =
-    row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
-      ? row.extensions
-      : {};
-  const initialTmpl =
-    typeof ext.commandTemplate === 'string' && ext.commandTemplate.trim()
-      ? ext.commandTemplate.trim()
-      : CURSOR_CLI_DEFAULT_TEMPLATE;
-  const [name, setName] = useState(row.name || '');
-  const [description, setDescription] = useState(row.description || '');
-  const [commandTemplate, setCommandTemplate] = useState(initialTmpl);
-  const [angleSlots, setAngleSlots] = useState(
-    () => mergeAngleSlotsWithDefaults(initialTmpl, Array.isArray(ext.angleSlots) ? ext.angleSlots : [])
+  const hydrateFromRow = useOutputDetailCursorStore((s) => s.hydrateFromRow);
+  useEffect(() => {
+    hydrateFromRow(row);
+  }, [row, hydrateFromRow]);
+
+  const {
+    name,
+    setName,
+    description,
+    setDescription,
+    commandTemplate,
+    angleSlots,
+    setAngleSlots,
+    voiceControl,
+    setVoiceControl,
+    targetEnv,
+    setTargetEnv,
+    msg,
+    setMsg,
+    err,
+    setErr,
+    onTemplateChange,
+  } = useOutputDetailCursorStore(
+    useShallow((s) => ({
+      name: s.name,
+      setName: s.setName,
+      description: s.description,
+      setDescription: s.setDescription,
+      commandTemplate: s.commandTemplate,
+      angleSlots: s.angleSlots,
+      setAngleSlots: s.setAngleSlots,
+      voiceControl: s.voiceControl,
+      setVoiceControl: s.setVoiceControl,
+      targetEnv: s.targetEnv,
+      setTargetEnv: s.setTargetEnv,
+      msg: s.msg,
+      setMsg: s.setMsg,
+      err: s.err,
+      setErr: s.setErr,
+      onTemplateChange: s.onTemplateChange,
+    }))
   );
-  const [voiceControl, setVoiceControl] = useState<OutputVoiceControl>(() =>
-    parseOutputVoiceControl(ext.voiceControl, 'cursor_cli')
-  );
-  const [targetEnv, setTargetEnv] = useState(() =>
-    mergeTargetEnvLayers(ext.cliEnv, ext.environment, row.environment)
-  );
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
 
   const onSave = (e) => {
     e.preventDefault();
-    setErr('');
-    const tmpl = commandTemplate.trim();
+    const ext =
+      row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
+        ? row.extensions
+        : {};
+    const st = useOutputDetailCursorStore.getState();
+    st.setErr('');
+    const tmpl = st.commandTemplate.trim();
     if (!tmpl) {
-      setErr('请填写执行指令');
+      st.setErr('请填写执行指令');
       return;
     }
-    const mergedSlots = mergeAngleSlotsWithDefaults(tmpl, angleSlots);
-    const prevWs =
-      typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '';
-    const envNorm = normalizeCliEnvRecord(targetEnv);
+    const mergedSlots = mergeAngleSlotsWithDefaults(tmpl, st.angleSlots);
+    const prevWs = typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '';
+    const envNorm = normalizeCliEnvRecord(st.targetEnv);
     const nextExt = {
       commandTemplate: tmpl,
       angleSlots: mergedSlots,
       cliWorkspace: deriveCursorCliWorkspace(mergedSlots, prevWs),
-      voiceControl: serializeOutputVoiceControl(voiceControl),
+      voiceControl: serializeOutputVoiceControl(st.voiceControl),
       environment: envNorm,
       cliEnv: envNorm,
     };
     try {
       if (row.builtin) {
         saveBuiltinOutputOverride(row.id, {
-          name: name.trim(),
-          description,
+          name: st.name.trim(),
+          description: st.description,
           requestUrl: '',
           outputShape: '',
           environment: envNorm,
@@ -86,25 +110,20 @@ function CursorOutputDetail({ row, onSaved }) {
         });
       } else {
         updateCustomOutput(row.id, {
-          name: name.trim(),
-          description,
+          name: st.name.trim(),
+          description: st.description,
           requestUrl: '',
           outputShape: '',
           environment: envNorm,
           extensions: nextExt,
         });
       }
-      setMsg('已保存');
+      st.setMsg('已保存');
       onSaved?.();
-      setTimeout(() => setMsg(''), 2200);
+      setTimeout(() => useOutputDetailCursorStore.getState().setMsg(''), 2200);
     } catch (e2) {
-      setErr(e2.message || '保存失败');
+      useOutputDetailCursorStore.getState().setErr(e2.message || '保存失败');
     }
-  };
-
-  const onTemplateChange = (t) => {
-    setCommandTemplate(t);
-    setAngleSlots((prev) => mergeAngleSlotsWithDefaults(t, prev));
   };
 
   return (
@@ -115,11 +134,23 @@ function CursorOutputDetail({ row, onSaved }) {
             <NavLink to="/outputs" className="reso-agent-back">
               ← 目标管理
             </NavLink>
-            <h1 className="sessions-title">Cursor 目标</h1>
+            <h1 className="sessions-title">
+              {row.deliveryType === 'qoder_cli' ? 'Qoder' : 'Cursor'} 目标
+            </h1>
             <p className="sessions-subtitle">
-              在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
-              绑定数据库会话后自动关联 Cursor 线程；复制/发送时若无 <code className="settings-code">--resume</code> 会自动插入。正文即每次的{' '}
-              <code className="settings-code">-p</code>。
+              {row.deliveryType === 'qoder_cli' ? (
+                <>
+                  在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
+                  输出重定向到服务端 <code className="settings-code">outputs/qoder/&lt;会话&gt;/</code>；正文即每次的{' '}
+                  <code className="settings-code">-p</code> 提示词。
+                </>
+              ) : (
+                <>
+                  在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
+                  绑定数据库会话后自动关联 Cursor 线程；复制/发送时若无 <code className="settings-code">--resume</code> 会自动插入。正文即每次的{' '}
+                  <code className="settings-code">-p</code>。
+                </>
+              )}
             </p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id" title={row.id}>
@@ -163,8 +194,11 @@ function CursorOutputDetail({ row, onSaved }) {
               <CliInstructionHeader
                 title="执行指令"
                 onExample={() => {
-                  setCommandTemplate(CURSOR_CLI_DEFAULT_TEMPLATE);
-                  setAngleSlots(buildAllCustomAngleSlots(CURSOR_CLI_DEFAULT_TEMPLATE));
+                  const t = CURSOR_CLI_DEFAULT_TEMPLATE;
+                  useOutputDetailCursorStore.setState({
+                    commandTemplate: t,
+                    angleSlots: buildAllCustomAngleSlots(t),
+                  });
                 }}
               />
               <textarea
@@ -211,23 +245,29 @@ function CursorOutputDetail({ row, onSaved }) {
 }
 
 function AsrBuiltinDetail({ row, onSaved }) {
-  const ext =
-    row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
-      ? row.extensions
-      : {};
-  const [voiceControl, setVoiceControl] = useState(() =>
-    parseOutputVoiceControl(ext.voiceControl, 'paragraph_clipboard')
+  const hydrateFromRow = useOutputDetailAsrBuiltinStore((s) => s.hydrateFromRow);
+  useEffect(() => {
+    hydrateFromRow(row);
+  }, [row, hydrateFromRow]);
+
+  const { voiceControl, setVoiceControl, msg, setMsg } = useOutputDetailAsrBuiltinStore(
+    useShallow((s) => ({
+      voiceControl: s.voiceControl,
+      setVoiceControl: s.setVoiceControl,
+      msg: s.msg,
+      setMsg: s.setMsg,
+    }))
   );
-  const [msg, setMsg] = useState('');
 
   const onSave = (e) => {
     e.preventDefault();
+    const st = useOutputDetailAsrBuiltinStore.getState();
     saveBuiltinOutputOverride(row.id, {
-      extensions: { voiceControl: serializeOutputVoiceControl(voiceControl) },
+      extensions: { voiceControl: serializeOutputVoiceControl(st.voiceControl) },
     });
-    setMsg('已保存');
+    st.setMsg('已保存');
     onSaved?.();
-    setTimeout(() => setMsg(''), 2200);
+    setTimeout(() => useOutputDetailAsrBuiltinStore.getState().setMsg(''), 2200);
   };
 
   return (
@@ -277,9 +317,10 @@ function AsrBuiltinDetail({ row, onSaved }) {
 
 export default function OutputDetailPage() {
   const { outputId } = useParams();
-  const [tick, setTick] = useState(0);
+  const tick = useOutputDetailShellStore((s) => s.tick);
+  const setTick = useOutputDetailShellStore((s) => s.setTick);
 
-  const bump = useCallback(() => setTick((t) => t + 1), []);
+  const bump = useCallback(() => setTick((t) => t + 1), [setTick]);
 
   useEffect(() => {
     const fn = () => bump();
@@ -310,7 +351,7 @@ export default function OutputDetailPage() {
     return <AsrBuiltinDetail key={`${row.id}-${tick}`} row={row} onSaved={bump} />;
   }
 
-  if (row.deliveryType === 'cursor_cli') {
+  if (row.deliveryType === 'cursor_cli' || row.deliveryType === 'qoder_cli') {
     return <CursorOutputDetail key={`${row.id}-${tick}`} row={row} onSaved={bump} />;
   }
 

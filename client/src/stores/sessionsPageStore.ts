@@ -1,0 +1,53 @@
+// @ts-nocheck
+import { create } from 'zustand';
+
+function upd<T>(prev: T, next: T | ((p: T) => T)): T {
+  return typeof next === 'function' ? (next as (p: T) => T)(prev) : next;
+}
+
+export const useSessionsPageStore = create((set) => ({
+  list: [],
+  setList: (list) => set({ list }),
+  total: 0,
+  setTotal: (total) => set({ total }),
+  page: 1,
+  setPage: (page) => set((s) => ({ page: upd(s.page, page) })),
+  pageSize: 10,
+  setPageSize: (pageSize) => set((s) => ({ pageSize: upd(s.pageSize, pageSize) })),
+  searchInput: '',
+  setSearchInput: (searchInput) => set({ searchInput }),
+  searchQ: '',
+  setSearchQ: (searchQ) => set({ searchQ }),
+  filter: 'all',
+  setFilter: (filter) => set({ filter }),
+  loading: true,
+  setLoading: (loading) => set({ loading }),
+  error: '',
+  setError: (error) => set({ error }),
+  view: 'list',
+  setView: (view) => set({ view }),
+  detailId: null,
+  setDetailId: (detailId) => set({ detailId }),
+  detail: null,
+  setDetail: (detail) => set({ detail }),
+  detailLoading: false,
+  setDetailLoading: (detailLoading) => set({ detailLoading }),
+  busy: false,
+  setBusy: (busy) => set({ busy }),
+  msg: '',
+  setMsg: (msg) => set({ msg }),
+  paraSearchInput: '',
+  setParaSearchInput: (paraSearchInput) => set({ paraSearchInput }),
+  paraSearchQ: '',
+  setParaSearchQ: (paraSearchQ) => set({ paraSearchQ }),
+  paraPage: 1,
+  setParaPage: (paraPage) => set((s) => ({ paraPage: upd(s.paraPage, paraPage) })),
+  paraPageSize: 10,
+  setParaPageSize: (paraPageSize) => set((s) => ({ paraPageSize: upd(s.paraPageSize, paraPageSize) })),
+  detailRefreshing: false,
+  setDetailRefreshing: (detailRefreshing) => set({ detailRefreshing }),
+  copiedParaId: null,
+  setCopiedParaId: (copiedParaId) => set({ copiedParaId }),
+  selectedIds: new Set(),
+  setSelectedIds: (u) => set((s) => ({ selectedIds: upd(s.selectedIds, u) })),
+}));

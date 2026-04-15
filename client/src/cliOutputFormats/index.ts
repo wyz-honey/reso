@@ -20,10 +20,13 @@ export function parseCliOutputForDelivery(
   _error: string
 ): ParsedCliOutput {
   const i = String(info ?? '');
-  if (deliveryType === 'cursor_cli' && looksLikeCursorStreamJson(i)) {
+  if (
+    (deliveryType === 'cursor_cli' || deliveryType === 'qoder_cli') &&
+    looksLikeCursorStreamJson(i)
+  ) {
     return parseCursorStreamJson(i);
   }
-  if (deliveryType === 'cursor_cli') {
+  if (deliveryType === 'cursor_cli' || deliveryType === 'qoder_cli') {
     return parsePlainCliStdout(i);
   }
   return parsePlainCliStdout(i);

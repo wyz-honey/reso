@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import OutputVoiceControlSection from '../components/OutputVoiceControlSection';
@@ -21,6 +21,7 @@ import {
 import { useOutputRevisionStore } from '../stores/outputRevisionStore';
 import { BUILTIN_OUTPUT_ID } from '../constants/builtins';
 import { getBuiltinAgentDefaultPrompt, saveBuiltinAgentPrompt } from '../workModes';
+import { useResoAgentPageStore } from '../stores/resoAgentPageStore';
 import '../App.css';
 
 type CatalogRow = {
@@ -50,19 +51,55 @@ export default function ResoAgentPage() {
       models: s.models,
     }))
   );
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [requestUrl, setRequestUrl] = useState('');
-  const [outputShape, setOutputShape] = useState('');
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [resoProviderId, setResoProviderId] = useState('');
-  const [resoChatModelId, setResoChatModelId] = useState('');
-  const [voiceControl, setVoiceControl] = useState<OutputVoiceControl>(() =>
-    parseOutputVoiceControl(undefined, 'agent_chat')
+  const {
+    msg,
+    setMsg,
+    err,
+    setErr,
+    name,
+    setName,
+    description,
+    setDescription,
+    requestUrl,
+    setRequestUrl,
+    outputShape,
+    setOutputShape,
+    systemPrompt,
+    setSystemPrompt,
+    resoProviderId,
+    setResoProviderId,
+    resoChatModelId,
+    setResoChatModelId,
+    voiceControl,
+    setVoiceControl,
+    targetEnv,
+    setTargetEnv,
+  } = useResoAgentPageStore(
+    useShallow((s) => ({
+      msg: s.msg,
+      setMsg: s.setMsg,
+      err: s.err,
+      setErr: s.setErr,
+      name: s.name,
+      setName: s.setName,
+      description: s.description,
+      setDescription: s.setDescription,
+      requestUrl: s.requestUrl,
+      setRequestUrl: s.setRequestUrl,
+      outputShape: s.outputShape,
+      setOutputShape: s.setOutputShape,
+      systemPrompt: s.systemPrompt,
+      setSystemPrompt: s.setSystemPrompt,
+      resoProviderId: s.resoProviderId,
+      setResoProviderId: s.setResoProviderId,
+      resoChatModelId: s.resoChatModelId,
+      setResoChatModelId: s.setResoChatModelId,
+      voiceControl: s.voiceControl,
+      setVoiceControl: s.setVoiceControl,
+      targetEnv: s.targetEnv,
+      setTargetEnv: s.setTargetEnv,
+    }))
   );
-  const [targetEnv, setTargetEnv] = useState<Record<string, string>>({});
 
   const refreshBinding = useCallback(() => {
     const row = listAllOutputs().find((r) => (r as CatalogRow).id === BUILTIN_OUTPUT_ID.AGENT) as

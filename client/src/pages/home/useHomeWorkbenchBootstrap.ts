@@ -1,8 +1,10 @@
 // @ts-nocheck — aligned with HomePage incremental typing
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { fetchQuickInputs, fetchServerMeta, fetchSessionList } from '../../api';
 import { setResolvedExternalThreadProviderFromServer } from '../../resolvedExternalThread';
 import { useHomeWorkbenchModesStore } from '../../stores/homeWorkbenchModesStore';
+import { useHomeWorkbenchBootstrapStore } from '../../stores/homeWorkbenchBootstrapStore';
 
 type BootstrapOpts = {
   isAsr: boolean;
@@ -19,11 +21,31 @@ export function useHomeWorkbenchBootstrap({
   isAgent,
   asrSessionId,
 }: BootstrapOpts) {
-  const [quickInputs, setQuickInputs] = useState([]);
-  const [serverWorkspaceFallback, setServerWorkspaceFallback] = useState(undefined);
-  const [workspacePickSessions, setWorkspacePickSessions] = useState([]);
-  const [workspacePickLoading, setWorkspacePickLoading] = useState(false);
-  const [workspacePickErr, setWorkspacePickErr] = useState('');
+  const {
+    quickInputs,
+    setQuickInputs,
+    serverWorkspaceFallback,
+    setServerWorkspaceFallback,
+    workspacePickSessions,
+    setWorkspacePickSessions,
+    workspacePickLoading,
+    setWorkspacePickLoading,
+    workspacePickErr,
+    setWorkspacePickErr,
+  } = useHomeWorkbenchBootstrapStore(
+    useShallow((s) => ({
+      quickInputs: s.quickInputs,
+      setQuickInputs: s.setQuickInputs,
+      serverWorkspaceFallback: s.serverWorkspaceFallback,
+      setServerWorkspaceFallback: s.setServerWorkspaceFallback,
+      workspacePickSessions: s.workspacePickSessions,
+      setWorkspacePickSessions: s.setWorkspacePickSessions,
+      workspacePickLoading: s.workspacePickLoading,
+      setWorkspacePickLoading: s.setWorkspacePickLoading,
+      workspacePickErr: s.workspacePickErr,
+      setWorkspacePickErr: s.setWorkspacePickErr,
+    }))
+  );
 
   const loadQuickInputs = useCallback(async () => {
     try {
@@ -32,7 +54,7 @@ export function useHomeWorkbenchBootstrap({
     } catch {
       setQuickInputs([]);
     }
-  }, []);
+  }, [setQuickInputs]);
 
   useEffect(() => {
     loadQuickInputs();
@@ -65,7 +87,7 @@ export function useHomeWorkbenchBootstrap({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setServerWorkspaceFallback]);
 
   const loadWorkspacePickSessions = useCallback(async () => {
     setWorkspacePickLoading(true);
@@ -79,7 +101,7 @@ export function useHomeWorkbenchBootstrap({
     } finally {
       setWorkspacePickLoading(false);
     }
-  }, []);
+  }, [setWorkspacePickErr, setWorkspacePickLoading, setWorkspacePickSessions]);
 
   useEffect(() => {
     if (!isAsr && !isCli && !isHttp && !isAgent) return;

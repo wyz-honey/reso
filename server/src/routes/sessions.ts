@@ -10,6 +10,8 @@ import {
   listSessions,
 } from '~/services/sessionService.ts';
 import { ensureSessionExternalThreadWithAgentCreateChat } from '~/services/cursorAgentEnsure.ts';
+import { ensureSessionExternalThreadWithQoderCli } from '~/services/qoderAgentEnsure.ts';
+import { QODER_EXTERNAL_THREAD_PROVIDER } from '~/constants/cursorWorkbench.ts';
 import { parseCliEnvPayload } from '~/utils/cliEnvMerge.ts';
 import {
   deleteSessionExternalThread,
@@ -152,12 +154,17 @@ export function createSessionsRouter(db: AppDb | null): Router {
     }
     try {
       const cliEnv = parseCliEnvPayload(req.body?.cliEnv);
-      const out = await ensureSessionExternalThreadWithAgentCreateChat(
-        db,
-        req.params.sessionId,
-        req.params.provider,
-        Object.keys(cliEnv).length > 0 ? { cliEnv } : undefined
-      );
+      const prov = String(req.params.provider || '').trim();
+      const envOpt = Object.keys(cliEnv).length > 0 ? { cliEnv } : undefined;
+      const out =
+        prov === QODER_EXTERNAL_THREAD_PROVIDER
+          ? await ensureSessionExternalThreadWithQoderCli(db, req.params.sessionId, prov, envOpt)
+          : await ensureSessionExternalThreadWithAgentCreateChat(
+              db,
+              req.params.sessionId,
+              prov,
+              envOpt
+            );
       return res.json(out);
     } catch (e) {
       const sc = getErrorStatus(e);

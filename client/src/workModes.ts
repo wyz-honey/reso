@@ -1,9 +1,10 @@
 import { mergeTargetEnvLayers, normalizeCliEnvRecord } from './cliEnv';
-import { BUILTIN_OUTPUT_ID } from './constants/builtins';
+import { BUILTIN_OUTPUT_ID, QODER_EXTERNAL_THREAD_PROVIDER } from './constants/builtins';
 import { mergeAngleSlotsWithDefaults } from './cliSubstitute';
 import {
   addCustomOutput,
   CURSOR_CLI_DEFAULT_TEMPLATE,
+  QODER_CLI_DEFAULT_TEMPLATE,
   getCustomOutputs,
   listAllOutputs,
   newOutputId,
@@ -175,11 +176,14 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         voiceControl,
       };
     }
-    case 'cursor_cli': {
+    case 'cursor_cli':
+    case 'qoder_cli': {
+      const isQoder = String(o.deliveryType || '') === 'qoder_cli';
+      const defaultTmpl = isQoder ? QODER_CLI_DEFAULT_TEMPLATE : CURSOR_CLI_DEFAULT_TEMPLATE;
       const tmpl =
         typeof ext.commandTemplate === 'string' && ext.commandTemplate.trim()
           ? ext.commandTemplate.trim()
-          : CURSOR_CLI_DEFAULT_TEMPLATE;
+          : defaultTmpl;
       const angleSlots = Array.isArray(ext.angleSlots) ? ext.angleSlots : [];
       return {
         id: o.id,
@@ -190,8 +194,10 @@ function mapOutputRowToMode(o: Record<string, unknown>) {
         cliTemplate: tmpl,
         cliWorkspace: typeof ext.cliWorkspace === 'string' ? ext.cliWorkspace : '',
         angleSlots: mergeAngleSlotsWithDefaults(tmpl, angleSlots),
-        cliVariant: 'cursor',
-        externalThreadProvider: getResolvedExternalThreadProvider(),
+        cliVariant: isQoder ? 'qoder' : 'cursor',
+        externalThreadProvider: isQoder
+          ? QODER_EXTERNAL_THREAD_PROVIDER
+          : getResolvedExternalThreadProvider(),
         cliEnv: targetEnv,
         voiceControl,
       };
@@ -411,7 +417,7 @@ export function updateCliModeFields(
   const row = listAllOutputs().find((x) => String((x as { id: string }).id) === String(modeId)) as
     | Record<string, unknown>
     | undefined;
-  if (row?.deliveryType === 'cursor_cli') {
+  if (row?.deliveryType === 'cursor_cli' || row?.deliveryType === 'qoder_cli') {
     const prevExt =
       row.extensions && typeof row.extensions === 'object' && !Array.isArray(row.extensions)
         ? { ...(row.extensions as object) }

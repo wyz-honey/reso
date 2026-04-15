@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -42,14 +43,21 @@ export default defineConfig(({ mode, command }) => {
   const isDevServe = command === 'serve';
   const devAsrWs = isDevServe ? `ws://127.0.0.1:${backendPort}/ws/asr` : '';
   const devCursorWs = isDevServe ? `ws://127.0.0.1:${backendPort}/ws/cursor-tail` : '';
+  const devUiControlWs = isDevServe ? `ws://127.0.0.1:${backendPort}/ws/ui-control` : '';
 
   return {
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      },
+    },
     define: {
       __RESO_DEV_ASR_WS_URL__: JSON.stringify(devAsrWs),
       __RESO_DEV_CURSOR_WS_URL__: JSON.stringify(devCursorWs),
+      __RESO_DEV_UI_CONTROL_WS_URL__: JSON.stringify(devUiControlWs),
     },
     build: { assetsInlineLimit: 0 },
-    plugins: [react(), pcmWorkletUrlPlugin(isDevServe)],
+    plugins: [tailwindcss(), react(), pcmWorkletUrlPlugin(isDevServe)],
     server: {
       port: 5173,
       proxy: {

@@ -31,22 +31,32 @@ export async function acquireMicStream() {
       '非安全上下文：请用 http://localhost:端口 或 https 打开页面；用 http://192.168.x.x 访问时多数浏览器不允许麦克风。'
     );
   }
-  const tryConstraints = [
-    { audio: true },
+  const baseAudio: MediaTrackConstraints = {
+    channelCount: { ideal: 1 },
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: true },
+    autoGainControl: { ideal: true },
+  };
+  const supported = navigator.mediaDevices?.getSupportedConstraints?.() as
+    | (MediaTrackSupportedConstraints & { voiceIsolation?: boolean })
+    | undefined;
+  const tryConstraints: MediaStreamConstraints[] = [];
+  if (supported?.voiceIsolation) {
+    tryConstraints.push({
+      audio: { ...baseAudio, voiceIsolation: { ideal: true } } as MediaTrackConstraints,
+    });
+  }
+  tryConstraints.push(
+    { audio: baseAudio },
     {
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
+        autoGainControl: true,
       },
     },
-    {
-      audio: {
-        channelCount: { ideal: 1 },
-        echoCancellation: { ideal: true },
-        noiseSuppression: { ideal: true },
-      },
-    },
-  ];
+    { audio: true }
+  );
   let lastErr;
   for (const c of tryConstraints) {
     try {

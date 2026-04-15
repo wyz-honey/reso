@@ -15,6 +15,23 @@ import { mergeProcessEnvFillMissing } from '~/utils/cliEnvMerge.ts';
 
 const execFileAsync = promisify(execFile);
 
+/** `agent create-chat` 子进程超时（毫秒）；冷启动/网络慢时 120s 易不够，可调大 */
+function resolveCreateChatTimeoutMs(): number {
+  const raw = String(process.env.RESO_CURSOR_CREATE_CHAT_TIMEOUT_MS ?? '').trim();
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  const fallback = 300_000; /* 5 分钟 */
+  const v = Number.isFinite(n) && n > 0 ? n : fallback;
+  return Math.min(900_000, Math.max(30_000, v)); /* 30s～15min */
+}
+
+function isCreateChatTimeoutErr(e: unknown): boolean {
+  const err = e as NodeJS.ErrnoException & { signal?: string; code?: string };
+  if (err?.signal === 'SIGTERM') return true;
+  if (err?.code === 'ERR_CHILD_PROCESS_TIMEOUT') return true;
+  const msg = String(err?.message ?? e ?? '');
+  return /timed out|timeout|ETIMEDOUT/i.test(msg);
+}
+
 const CHAT_ID_LINE_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -35,11 +52,12 @@ async function runAgentCreateChat(
   agentBin: string,
   cliEnvFill?: Record<string, string>
 ): Promise<string> {
+  const timeoutMs = resolveCreateChatTimeoutMs();
   try {
     const env = mergeProcessEnvFillMissing(process.env, cliEnvFill || {});
     const { stdout, stderr } = await execFileAsync(agentBin, ['create-chat'], {
       maxBuffer: 4 * 1024 * 1024,
-      timeout: 120_000,
+      timeout: timeoutMs,
       env,
     });
     if (stderr && String(stderr).trim()) {
@@ -54,8 +72,11 @@ async function runAgentCreateChat(
         503
       );
     }
-    if (err.signal === 'SIGTERM') {
-      throw new AppError('agent create-chat 超时，请重试', 504);
+    if (isCreateChatTimeoutErr(e)) {
+      throw new AppError(
+        `agent create-chat 超时（当前上限 ${timeoutMs / 1000}s）。若本机 Cursor CLI 冷启动较慢，可在服务端设置 RESO_CURSOR_CREATE_CHAT_TIMEOUT_MS（毫秒，范围 30000～900000）后重试`,
+        504
+      );
     }
     const msg = err instanceof Error ? err.message : String(e);
     throw new AppError(`执行 agent create-chat 失败：${msg}`, 502);

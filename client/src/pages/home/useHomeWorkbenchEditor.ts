@@ -1,8 +1,16 @@
 // @ts-nocheck — aligned with HomePage incremental typing
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { useHomeWorkbenchEditorStore } from '../../stores/homeWorkbenchEditorStore';
 
 export function useHomeWorkbenchEditor() {
-  const [editorContent, setEditorContent] = useState('');
+  const { editorContent, setEditorContent } = useHomeWorkbenchEditorStore(
+    useShallow((s) => ({
+      editorContent: s.editorContent,
+      setEditorContent: s.setEditorContent,
+    }))
+  );
+
   const editorTextareaRef = useRef(null);
   const editorSelRef = useRef({ start: null, end: null });
   const editorContentRef = useRef('');
@@ -66,7 +74,7 @@ export function useHomeWorkbenchEditor() {
       });
       return next;
     });
-  }, []);
+  }, [setEditorContent]);
 
   return {
     editorContent,

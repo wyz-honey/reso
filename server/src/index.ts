@@ -6,6 +6,7 @@ import { createDb } from '~/database/db.ts';
 import { createPool } from '~/database/pool.ts';
 import { sessions } from '~/database/schema.ts';
 import { attachWebSockets } from '~/websocket/setup.ts';
+import { createUiControlPushHandler } from '~/routes/uiControlPush.ts';
 import { stopAllCursorRuns } from '~/services/cursorRunManager.ts';
 import { PORT } from '~/config/constants.ts';
 import {
@@ -21,7 +22,15 @@ const db = pool ? createDb(pool) : null;
 const app = createApp(db);
 const httpServer = createServer(app);
 
-const { shutdownSockets } = attachWebSockets(httpServer);
+const { shutdownSockets, broadcastUiControlCommands } = attachWebSockets(httpServer);
+
+app.post(
+  '/api/ui-control/push',
+  createUiControlPushHandler({
+    getSecret: () => String(process.env.RESO_UI_CONTROL_SECRET ?? '').trim(),
+    broadcast: broadcastUiControlCommands,
+  })
+);
 
 let shuttingDown = false;
 function gracefulShutdown(signal: string): void {
@@ -68,7 +77,7 @@ async function main(): Promise<void> {
   httpServer.listen(PORT, () => {
     serviceLog(
       'server',
-      `listening http://localhost:${PORT} (ws /ws/asr, /ws/cursor-tail, REST /api) log→${getLogFilePath()} errors→${getErrorLogFilePath()}`
+      `listening http://localhost:${PORT} (ws /ws/asr, /ws/cursor-tail, /ws/ui-control, REST /api) log→${getLogFilePath()} errors→${getErrorLogFilePath()}`
     );
   });
 }

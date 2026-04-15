@@ -18,6 +18,20 @@ export const CURSOR_CLI_DEFAULT_TEMPLATE = `agent \\
 --model <模型> \\
 > <输出正常信息地址> \\
 2> <输出错误信息地址>`;
+
+/**
+ * 与 Qoder 官方 Print 模式一致：`qodercli --print`、非交互示例中的 `-q -p`、`-w`、`--output-format`。
+ * @see https://docs.qoder.com/zh/cli/using-cli
+ */
+export const QODER_CLI_DEFAULT_TEMPLATE = `qodercli \\
+--print \\
+-q \\
+-p <输入> \\
+-w <工作空间> \\
+--output-format stream-json \\
+--yolo \\
+> <输出正常信息地址> \\
+2> <输出错误信息地址>`;
 const BUILTIN_OVERRIDE_KEY = 'reso_builtin_output_overrides_v1';
 const LEGACY_MODES_KEY = 'reso_work_modes_custom_v1';
 
@@ -37,6 +51,7 @@ export const DELIVERY_TYPE_LABELS = {
   http: 'HTTP',
   xiaoai: 'CLI',
   cursor_cli: 'Cursor',
+  qoder_cli: 'Qoder',
   stream: '流式（旧）',
   command: 'CLI（旧）',
 } as const;
@@ -56,7 +71,13 @@ export const TARGET_KIND_LABELS = {
 export function inferTargetKind(deliveryType: string | undefined): TargetKind {
   const dt = String(deliveryType || '');
   if (dt === 'http' || dt === 'paragraph_clipboard' || dt === 'stream') return TARGET_KINDS.api;
-  if (dt === 'agent_chat' || dt === 'xiaoai' || dt === 'command' || dt === 'cursor_cli')
+  if (
+    dt === 'agent_chat' ||
+    dt === 'xiaoai' ||
+    dt === 'command' ||
+    dt === 'cursor_cli' ||
+    dt === 'qoder_cli'
+  )
     return TARGET_KINDS.agent;
   return TARGET_KINDS.api;
 }
@@ -135,7 +156,11 @@ export function saveBuiltinOutputOverride(
             ...patch.extensions,
           }
         : prev.extensions;
-    if (id === BUILTIN_OUTPUT_ID.CURSOR && next.extensions && typeof next.extensions === 'object') {
+    if (
+      (id === BUILTIN_OUTPUT_ID.CURSOR || id === BUILTIN_OUTPUT_ID.QODER) &&
+      next.extensions &&
+      typeof next.extensions === 'object'
+    ) {
       const { externalThreadProvider: _etp, ...rest } = next.extensions as Record<string, unknown>;
       next.extensions = rest;
     }
@@ -191,6 +216,23 @@ export function getBuiltinOutputs() {
         angleSlots: mergeAngleSlotsWithDefaults(CURSOR_CLI_DEFAULT_TEMPLATE, []),
       },
     },
+    {
+      id: BUILTIN_OUTPUT_ID.QODER,
+      builtin: true,
+      targetKind: TARGET_KINDS.agent,
+      createdAt: null,
+      updatedAt: null,
+      name: 'Qoder',
+      description:
+        '本机执行 `qodercli --print -q -p …`（与官方文档 Print 模式一致）；正文进 `-p`；`-r` 由工作台在发送时自动插入（等同 Cursor 侧 `--resume`）；stdout/stderr 重定向到 server/outputs/qoder/<会话ID>/info.txt 与 error.txt。详见 https://docs.qoder.com/zh/cli/using-cli',
+      deliveryType: 'qoder_cli',
+      requestUrl: '',
+      outputShape: '',
+      extensions: {
+        commandTemplate: QODER_CLI_DEFAULT_TEMPLATE,
+        angleSlots: mergeAngleSlotsWithDefaults(QODER_CLI_DEFAULT_TEMPLATE, []),
+      },
+    },
   ];
 }
 
@@ -208,7 +250,11 @@ export function getMergedBuiltinOutputs() {
         ? p.extensions
         : null;
     let extensions = patchExt ? { ...baseExt, ...patchExt } : { ...baseExt };
-    if (b.id === BUILTIN_OUTPUT_ID.CURSOR && extensions && typeof extensions === 'object') {
+    if (
+      (b.id === BUILTIN_OUTPUT_ID.CURSOR || b.id === BUILTIN_OUTPUT_ID.QODER) &&
+      extensions &&
+      typeof extensions === 'object'
+    ) {
       const { externalThreadProvider: _e, ...rest } = extensions as Record<string, unknown>;
       extensions = rest;
     }
@@ -346,7 +392,7 @@ export function updateCustomOutput(id: string, patch: Record<string, unknown>) {
         : inferTargetKind(nextDt as string);
     let patchOut = patch;
     if (
-      nextDt === 'cursor_cli' &&
+      (nextDt === 'cursor_cli' || nextDt === 'qoder_cli') &&
       patch.extensions &&
       typeof patch.extensions === 'object' &&
       !Array.isArray(patch.extensions)

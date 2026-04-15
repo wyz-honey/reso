@@ -29,7 +29,11 @@ export function deriveCursorCliWorkspace(
   if (wsSlot?.source === 'custom') return String(wsSlot.customValue ?? '').trim();
   return String(previousCliWorkspace ?? '').trim();
 }
-import { CURSOR_CLI_DEFAULT_TEMPLATE } from './outputCatalog';
+import { CURSOR_CLI_DEFAULT_TEMPLATE, QODER_CLI_DEFAULT_TEMPLATE } from './outputCatalog';
+
+function defaultCliWorkbenchTemplate(mode: Record<string, unknown> | null | undefined): string {
+  return mode?.cliVariant === 'qoder' ? QODER_CLI_DEFAULT_TEMPLATE : CURSOR_CLI_DEFAULT_TEMPLATE;
+}
 
 export const CURSOR_TRIAD_LABELS = ['模型', '工作空间', '输出路径'] as const;
 
@@ -39,8 +43,8 @@ export function cursorTriadLabelsInTemplate(template: unknown): string[] {
 }
 
 export function getMergedCursorSlots(mode: Record<string, unknown> | null | undefined): AngleSlot[] {
-  if (!mode || mode.cliVariant !== 'cursor') return [];
-  const tmpl = (mode.cliTemplate as string) || CURSOR_CLI_DEFAULT_TEMPLATE;
+  if (!mode || (mode.cliVariant !== 'cursor' && mode.cliVariant !== 'qoder')) return [];
+  const tmpl = (mode.cliTemplate as string) || defaultCliWorkbenchTemplate(mode);
   return mergeAngleSlotsWithDefaults(tmpl, (mode.angleSlots as unknown[]) || []);
 }
 
@@ -53,7 +57,7 @@ export function cursorModeNeedsExternalThread(mode: Record<string, unknown> | nu
 
 export function cursorTriadCustomValues(mode: Record<string, unknown> | null | undefined) {
   const slots = getMergedCursorSlots(mode);
-  const tmpl = (mode?.cliTemplate as string) || CURSOR_CLI_DEFAULT_TEMPLATE;
+  const tmpl = (mode?.cliTemplate as string) || defaultCliWorkbenchTemplate(mode);
   const labels = cursorTriadLabelsInTemplate(tmpl);
   const out: Record<string, string> = { 模型: '', 工作空间: '', 输出路径: '' };
   for (const lab of labels) {
@@ -178,9 +182,9 @@ export function cursorCliFillHint(
   const needsStderr = merged.some((s) => s.source === 'system' && s.systemField === 'cursorStderr');
   if (needsStdout && !String(ctx?.cursorStdoutAbsPath || '').trim()) {
     if (!String(ctx?.sessionId || '').trim()) {
-      return '发送时将自动创建数据库会话并生成本会话的 Cursor 输出路径（与官方 agent 重定向一致）';
+      return '发送时将自动创建数据库会话并生成本会话的 CLI 输出路径（与官方 CLI 重定向一致）';
     }
-    return '请绑定数据库会话，或把 <输出正常信息地址> 改为自定义路径（需与本机 agent 写入位置一致）';
+      return '请绑定数据库会话，或把 <输出正常信息地址> 改为自定义路径（需与本机 CLI 写入位置一致）';
   }
   if (needsStderr && !String(ctx?.cursorStderrAbsPath || '').trim()) {
     if (!String(ctx?.sessionId || '').trim()) {
@@ -190,7 +194,7 @@ export function cursorCliFillHint(
   }
   const needsExt = merged.some((s) => s.source === 'system' && s.systemField === 'externalThread');
   if (needsExt && !String(ctx?.externalThreadId || '').trim()) {
-    return '正在关联 Cursor 对话，请稍候；若一直失败请确认运行 Reso 的机器已安装 agent 并已登录（或检查目标详情中的指令模板）';
+    return '正在关联外部 CLI 会话，请稍候；若一直失败请确认本机已安装对应 CLI 并已登录（Cursor：`agent`；Qoder：`qodercli`），或检查目标详情中的指令模板';
   }
   return '请补全指令模板中的占位（含正文段落与路径类字段）';
 }
