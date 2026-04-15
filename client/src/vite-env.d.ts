@@ -7,3 +7,8 @@ declare module '*?url' {
   const src: string;
   export default src;
 }
+
+declare module 'virtual:pcm-worklet-url' {
+  const url: string;
+  export default url;
+}

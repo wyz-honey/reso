@@ -88,7 +88,7 @@ import {
 } from '../cliOutputFormats/index';
 import '../App.css';
 import WorkModeSelect from '../components/WorkModeSelect';
-import pcmWorkletUrl from '../audio/pcmCaptureProcessor.ts?url';
+import pcmWorkletUrl from 'virtual:pcm-worklet-url';
 import { wsUrl, cursorTailWsUrl } from './home/workbenchUrls';
 import { micErrorMessage, acquireMicStream } from './home/workbenchMic';
 import {
