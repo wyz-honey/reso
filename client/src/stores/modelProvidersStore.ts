@@ -85,18 +85,18 @@ export function createDefaultProviderState(): ModelProviderPersisted {
   const pid = 'pv_bailian';
   const models: ModelRecord[] = [
     {
-      id: 'm_paraformer_rt',
-      providerId: pid,
-      category: MODEL_CATEGORIES.speech,
-      apiModelId: 'paraformer-realtime-v2',
-      label: 'Paraformer 实时 v2',
-    },
-    {
       id: 'm_qwen3_asr_rt_20260210',
       providerId: pid,
       category: MODEL_CATEGORIES.speech,
       apiModelId: QWEN3_ASR_RT_API_ID,
       label: 'Qwen3 ASR Flash Realtime (2026-02-10)',
+    },
+    {
+      id: 'm_paraformer_rt',
+      providerId: pid,
+      category: MODEL_CATEGORIES.speech,
+      apiModelId: 'paraformer-realtime-v2',
+      label: 'Paraformer 实时 v2',
     },
     ...CHAT_PRESETS.map((c, i) => ({
       id: `m_qwen_${i}`,
