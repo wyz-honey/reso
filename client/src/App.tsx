@@ -135,6 +135,10 @@ export default function App() {
             <IconWorkbench />
             <span className="nav-link-label">工作台</span>
           </NavLink>
+          <NavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            <IconTasks />
+            <span className="nav-link-label">任务</span>
+          </NavLink>
           <div className="sidebar-nav-group">
             <div className="sidebar-nav-label">输入</div>
             <WorkbenchGuardedNavLink to="/sessions" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
@@ -147,10 +151,6 @@ export default function App() {
             >
               <IconQuick />
               <span className="nav-link-label">快捷上下文</span>
-            </WorkbenchGuardedNavLink>
-            <WorkbenchGuardedNavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-              <IconTasks />
-              <span className="nav-link-label">任务</span>
             </WorkbenchGuardedNavLink>
           </div>
           <div className="sidebar-nav-group">

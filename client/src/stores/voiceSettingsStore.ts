@@ -79,6 +79,38 @@ export function getAsrLanguageHintsArray(hintsText: string): string[] {
 
 const ORAL_LEAD_SYLLABLES_RE = /^(嗯+|啊+|呃+|额+|欸+|诶+)[，,、\s\u3000]*/u;
 
+/** 句末语气词（与句首同类），前可带轻读停顿标点 */
+const ORAL_TRAIL_SYLLABLES_RE =
+  /(?:[，,、\s\u3000。！？.!?])*(?:嗯+|啊+|呃+|额+|欸+|诶+)(?:[。！？.!?\s\u3000]*)?$/u;
+
+function stripInvisibleChars(text: string): string {
+  return text.replace(/[\u200b-\u200d\ufeff\u2060\u00ad]/g, '');
+}
+
+/** 折叠识别结果里重复的句读、去掉零宽字符等，不改动正常单次标点 */
+function stripMiddleNoisePunctuation(text: string): string {
+  let s = text;
+  s = s.replace(/(?:。){2,}/g, '。');
+  s = s.replace(/(?:，){2,}/g, '，');
+  s = s.replace(/(?:、){2,}/g, '、');
+  s = s.replace(/(?:…){2,}/g, '…');
+  s = s.replace(/\.{3,}/g, '.');
+  s = s.replace(/(?:[,]){3,}/g, ',');
+  s = s.replace(/\u00b7{2,}/g, '\u00b7');
+  return s;
+}
+
+/** 去掉首尾常见单字语气词（与「过滤语气词」互补，在客户端再清一层） */
+function stripDefaultOralFillerEdges(text: string): string {
+  let s = text;
+  for (let i = 0; i < 24; i++) {
+    const before = s;
+    s = s.replace(ORAL_LEAD_SYLLABLES_RE, '').replace(ORAL_TRAIL_SYLLABLES_RE, '').trim();
+    if (s === before) break;
+  }
+  return s;
+}
+
 function oralStripPhrasesFromText(text: string): string[] {
   return text
     .split(/\r?\n/)
@@ -122,11 +154,14 @@ function stripOralEdges(text: string, phrases: string[]): string {
 
 export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
   let t = String(raw ?? '');
-  if (!v.oralStripEnabled) return t;
-  t = t.replace(ORAL_LEAD_SYLLABLES_RE, '');
-  const phrases = oralStripPhrasesFromText(v.oralStripPhrasesText);
-  if (phrases.length) t = stripOralEdges(t, phrases);
-  else t = stripOralEdges(t, []);
+  t = stripInvisibleChars(t);
+  t = stripMiddleNoisePunctuation(t);
+  t = stripDefaultOralFillerEdges(t);
+  if (v.oralStripEnabled) {
+    const phrases = oralStripPhrasesFromText(v.oralStripPhrasesText);
+    if (phrases.length) t = stripOralEdges(t, phrases);
+    else t = stripOralEdges(t, []);
+  }
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
