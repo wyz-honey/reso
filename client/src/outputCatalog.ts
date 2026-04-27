@@ -46,7 +46,7 @@ export const HTTP_PROTOCOL_LABELS = {
 } as const;
 
 export const DELIVERY_TYPE_LABELS = {
-  paragraph_clipboard: '标准模式',
+  paragraph_clipboard: '自然语言识别',
   agent_chat: 'RESO',
   http: '网络',
   xiaoai: '终端',
@@ -177,7 +177,7 @@ export function getBuiltinOutputs() {
       targetKind: TARGET_KINDS.api,
       createdAt: null,
       updatedAt: null,
-      name: '标准模式',
+      name: '自然语言识别',
       description:
         '语音转写进入正文区；确认后复制到剪贴板并持久化保存，适合纪要、草稿流水线。',
       deliveryType: 'paragraph_clipboard',

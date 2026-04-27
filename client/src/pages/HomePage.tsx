@@ -8,7 +8,6 @@ import {
   apiCreateSession,
   apiCursorRun,
   apiCursorStop,
-  apiDeleteChatMessages,
   apiDeleteSession,
   apiEnsureSessionExternalThread,
   apiSaveParagraph,
@@ -39,6 +38,7 @@ import {
   getVoiceSettings,
   matchesEndPhrase,
   dedupeTranscriptJoin,
+  normalizePartialTranscriptText,
   normalizeTranscriptText,
   stripMatchedPhrase,
 } from '../stores/voiceSettingsStore';
@@ -87,6 +87,7 @@ import {
 } from '../cursorTriad';
 import CursorCliStructuredView from '../components/CursorCliStructuredView';
 import CursorWorkbenchDbAssistantBody from './home/CursorWorkbenchDbAssistantBody';
+import { AppModalShell } from '@/components/ui/AppModalShell';
 import {
   looksLikeCursorStreamJson,
   parseCliOutputForDelivery,
@@ -106,7 +107,17 @@ import {
   computeWorkbenchCliCommand,
   consumeCursorOmitResumeAndBuildCommand,
 } from './home/workbenchCliCommand';
-import { IconPlay, IconPause, IconCliParams, IconMic, IconMicMuted } from './home/HomeWorkbenchIcons';
+import {
+  IconPlay,
+  IconPause,
+  IconCliParams,
+  IconMic,
+  IconMicMuted,
+  IconPlus,
+  IconClock,
+  IconSidebarToggle,
+  IconContext,
+} from './home/HomeWorkbenchIcons';
 import HomeWorkbenchAddModeModal from './home/HomeWorkbenchAddModeModal';
 import HomeWorkbenchCliParamsModal from './home/HomeWorkbenchCliParamsModal';
 import { useHomeWorkbenchBootstrap } from './home/useHomeWorkbenchBootstrap';
@@ -117,6 +128,7 @@ import { useWorkbenchNavigationGuardStore } from '../stores/workbenchNavigationG
 import { useHomeWorkbenchRuntimeStore } from '../stores/homeWorkbenchRuntimeStore';
 
 export default function HomePage() {
+  const [quickInputsModalOpen, setQuickInputsModalOpen] = useState(false);
   const modes = useHomeWorkbenchModesStore((s) => s.modes);
   const setModes = useHomeWorkbenchModesStore((s) => s.setModes);
   const activeModeId = useHomeWorkbenchModesStore((s) => s.activeModeId);
@@ -266,6 +278,7 @@ export default function HomePage() {
   const stopRecognitionRef = useRef(() => {});
   /** 输入静音：关轨道 + 不发 PCM，避免环境声触发识别/自动发送 */
   const [micInputMuted, setMicInputMuted] = useState(false);
+  const [inputPaneCollapsed, setInputPaneCollapsed] = useState(false);
   const micInputMutedRef = useRef(false);
   const cursorTailInfoRef = useRef('');
   const cursorTailErrorRef = useRef('');
@@ -283,6 +296,9 @@ export default function HomePage() {
   /** 为 true 时，切换/创建会话的 effect 勿清空 pending/loading（发送流程中） */
   const cursorSendInFlightRef = useRef(false);
   const isCliWorkbenchRef = useRef(false);
+  const agentSessionAttachRef = useRef(null);
+  const cliSessionAttachRef = useRef(null);
+  const asrSessionAttachRef = useRef(null);
 
   const activeMode = modes.find((m) => m.id === activeModeId) || modes[0];
   const isAsr = activeMode?.kind === 'asr';
@@ -1099,7 +1115,7 @@ export default function HomePage() {
               return next;
             });
           } else {
-            const t = normalizeTranscriptText(msg.text || '', vox);
+            const t = normalizePartialTranscriptText(msg.text || '');
             partialTextRef.current = t;
             setPartialText(t);
             queueMicrotask(() => {
@@ -1889,14 +1905,30 @@ export default function HomePage() {
   const performCliCopyOnly = useCallback(async () => {
     if (!activeMode || activeMode.kind !== 'cli') return false;
     if (copyBusyRef.current) return false;
-    const text = `${editorContentRef.current}${partialTextRef.current || ''}`;
-    const sid = dbSessionIdRef.current;
+    const text = `${editorContentRef.current}${partialTextRef.current || ''}`.trim();
+    if (!text) {
+      setStatus('请先输入内容再复制指令');
+      return false;
+    }
+    let sid = dbSessionIdRef.current;
+    let paths = cursorSessionFilePaths;
+    let threadId = cursorResolvedExternalThreadId;
+    if (activeMode.cliVariant === 'cursor' || activeMode.cliVariant === 'qoder') {
+      const p = await provisionCursorWorkbenchCli();
+      if (!p.ok) {
+        setStatus(`${p.error}，再复制指令`);
+        return false;
+      }
+      sid = p.sid;
+      paths = p.paths;
+      threadId = p.threadId;
+    }
     const computed = consumeCursorOmitResumeAndBuildCommand(
       activeMode,
       text,
       sid,
-      cursorSessionFilePaths,
-      cursorResolvedExternalThreadId,
+      paths,
+      threadId,
       cliWorkspaceFallbackStr,
       cursorOmitResumeNextInvokeRef
     );
@@ -2155,7 +2187,16 @@ export default function HomePage() {
   };
 
   const copyCliCommandOnly = () => {
-    if (copyBusy) return Promise.resolve();
+    if (copyBusy) {
+      setStatus('正在处理，请稍后再试');
+      return Promise.resolve();
+    }
+    if (!cursorTriadReady) {
+      setStatus(
+        cursorWorkbenchReadinessHint || '请先完成「入参」中的模型、工作空间等后再复制指令。'
+      );
+      return Promise.resolve();
+    }
     return performCliCopyOnly();
   };
 
@@ -2163,6 +2204,24 @@ export default function HomePage() {
     if (copyBusy) return Promise.resolve();
     return performCliPipeline(`${editorContent}${partialText || ''}`.trim());
   };
+
+  const openSessionPicker = useCallback(
+    (target) => {
+      if (phase !== 'idle' || workspacePickLoading) return;
+      loadWorkspacePickSessions();
+      const ref =
+        target === 'agent'
+          ? agentSessionAttachRef
+          : target === 'asr'
+            ? asrSessionAttachRef
+            : cliSessionAttachRef;
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.click();
+    },
+    [phase, workspacePickLoading, loadWorkspacePickSessions]
+  );
 
   /** Agent 底栏：复制、尽量存段、再发给模型（模型可在设置里覆盖） */
   const submitAgentPrimary = () => {
@@ -2175,24 +2234,114 @@ export default function HomePage() {
     return performHttpPipeline(`${editorContent}${partialText || ''}`.trim());
   };
 
-  const clearAgentChat = async () => {
-    if (!activeMode || !isAgent) return;
-    const sid = asrSessionId && SESSION_UUID_RE.test(String(asrSessionId)) ? String(asrSessionId) : '';
-    if (!sid) {
-      setStatus('请先新建会话或从「已有会话」打开当前会话');
-      return;
-    }
-    const tid = getAgentThreadIdForSession(activeMode.id, sid);
-    const key = agentChatStateKey(activeMode.id, sid);
-    try {
-      if (tid) {
-        await apiDeleteChatMessages(tid);
-      }
-      setChatByModeId((s) => ({ ...s, [key]: [] }));
-      setStatus('已清空本条对话记录（还可继续聊）');
-    } catch (e) {
-      setStatus(e.message || '清空失败');
-    }
+  const renderCollapsedOutputComposer = () => {
+    if (!inputPaneCollapsed || (!isAgent && !isCliWorkbench)) return null;
+    return (
+      <div
+        className={`collapsed-output-composer${listening ? ' collapsed-output-composer--listening' : ''}`}
+        aria-label="输入与发送"
+      >
+        {listening ? (
+          <div className="collapsed-output-composer-left" aria-live="polite">
+            <span className="editor-recording-badge">{busy ? '连接中' : '识别中'}</span>
+            <div className="editor-recording-partial">
+              <span
+                className={`editor-recording-partial__text${
+                  partialText ? '' : ' editor-recording-partial__text--placeholder'
+                }`}
+              >
+                {partialText || (busy ? '正在连接识别服务…' : '')}
+              </span>
+              <VoiceWaveVisualizer active={recording && !micInputMuted} analyserRef={analyserRef} inline />
+            </div>
+          </div>
+        ) : null}
+        <div className="collapsed-output-composer-center">
+          <input
+            ref={editorTextareaRef}
+            type="text"
+            className="collapsed-output-composer-input"
+            value={editorContent}
+            onChange={(e) => setEditorContent(e.target.value)}
+            onBlur={onEditorBlur}
+            onSelect={captureEditorSelection}
+            onKeyUp={captureEditorSelection}
+            onMouseUp={captureEditorSelection}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              if (e.shiftKey) return;
+              if (e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              if (isCli) {
+                submitCliPrimary();
+                return;
+              }
+              if (isAgent) {
+                submitAgentPrimary();
+              }
+            }}
+            spellCheck={false}
+          />
+        </div>
+        <div className="collapsed-output-composer-right">
+          {isCliWorkbench ? (
+            <>
+              <button
+                type="button"
+                className={`btn-editor-cli-params ${!cursorTriadReady ? 'btn-editor-cli-params--needs-attention' : ''}`}
+                onClick={() => setCliParamsModalOpen(true)}
+                aria-label="CLI 入参配置"
+                title={!cursorTriadReady ? cursorWorkbenchReadinessHint || '打开 CLI 入参配置' : 'CLI 入参配置'}
+              >
+                <IconCliParams />
+                <span className="btn-editor-cli-params-text">入参</span>
+              </button>
+              <button
+                type="button"
+                className="btn-editor-secondary"
+                disabled={copyBusy}
+                title={
+                  !cursorTriadReady
+                    ? cursorWorkbenchReadinessHint || '请补全「入参」中的模型、工作空间等'
+                    : undefined
+                }
+                onClick={copyCliCommandOnly}
+              >
+                {copyBusy ? '…' : '复制指令'}
+              </button>
+              <button
+                type="button"
+                className="btn-editor-primary"
+                disabled={
+                  !!cursorRunActiveSessionId
+                    ? false
+                    : copyBusy || !`${editorContent}${partialText || ''}`.trim() || !cursorTriadReady
+                }
+                title={
+                  !cursorRunActiveSessionId && !cursorTriadReady
+                    ? cursorWorkbenchReadinessHint || '请补全「入参」中的模型、工作空间等'
+                    : undefined
+                }
+                onClick={() =>
+                  cursorRunActiveSessionId ? void onCursorStopRunClick() : void submitCliPrimary()
+                }
+              >
+                {cursorRunActiveSessionId ? '停止' : copyBusy ? '…' : '发送'}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn-editor-primary"
+              disabled={agentSendingCurrent || !`${editorContent}${partialText || ''}`.trim()}
+              onClick={submitAgentPrimary}
+            >
+              {agentSendingCurrent ? '…' : '发送'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const submitNewMode = (e) => {
@@ -2303,7 +2452,7 @@ export default function HomePage() {
       className={`home-page home-page--compact ${isAgent || isCliWorkbench ? 'home-page--split' : ''}`}
     >
       <div
-        className={`home-card ${isAgent || isCliWorkbench ? 'home-card--with-agent' : ''}${cursorUseSessionRail ? ' home-card--cursor-session-rail' : ''}`}
+        className={`home-card ${isAgent || isCliWorkbench ? 'home-card--with-agent' : ''}${cursorUseSessionRail ? ' home-card--cursor-session-rail' : ''}${inputPaneCollapsed && (isAgent || isCliWorkbench) ? ' home-card--input-collapsed' : ''}`}
       >
         <div className="home-card-main">
           <header className="top">
@@ -2346,7 +2495,7 @@ export default function HomePage() {
                           : '段落（命令占位）'
                         : '正文'}
                 </h2>
-                {isAsr || (isCli && !isCliWorkbench) || isHttp ? (
+                {(isCli && !isCliWorkbench) || isHttp ? (
                   <select
                     className="panel-session-select"
                     value={asrSessionId || ''}
@@ -2382,6 +2531,38 @@ export default function HomePage() {
               </div>
               {isAsr || (isCli && !isCliWorkbench) || isHttp ? (
                 <div className="panel-head-actions">
+                  {isAsr ? (
+                    <select
+                      ref={asrSessionAttachRef}
+                      key={`asr-${workbenchSessionAttachSelectKey}`}
+                      className="cursor-workbench-session-attach sr-only-select"
+                      aria-label="选择已有会话"
+                      value=""
+                      disabled={phase !== 'idle' || workspacePickLoading}
+                      onFocus={() => {
+                        if (phase !== 'idle' || workspacePickLoading) return;
+                        loadWorkspacePickSessions();
+                      }}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (!v) return;
+                        assignAsrSession(v);
+                        setWorkbenchSessionAttachSelectKey((n) => n + 1);
+                        setStatus('已选择已有会话，段落将写入该会话');
+                      }}
+                      title={workspacePickErr || undefined}
+                    >
+                      <option value="">已有会话…</option>
+                      {workspacePickOptions.map((s) => {
+                        const id = String(s.id ?? '');
+                        return (
+                          <option key={id} value={id}>
+                            {formatWorkbenchSessionLabel(s)}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  ) : null}
                   {isCli ? (
                     <button
                       type="button"
@@ -2392,9 +2573,43 @@ export default function HomePage() {
                       <IconCliParams />
                     </button>
                   ) : null}
-                  <button type="button" className="btn-new-session" onClick={onNewAsrSession}>
-                    新建会话
+                  {quickInputs.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn-cli-params-icon"
+                      onClick={() => setQuickInputsModalOpen(true)}
+                      aria-label="打开快捷上下文"
+                      title="快捷上下文"
+                    >
+                      <IconContext />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={
+                      isAsr
+                        ? 'btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain'
+                        : 'btn-new-session'
+                    }
+                    onClick={onNewAsrSession}
+                    disabled={phase !== 'idle'}
+                    aria-label="新建会话"
+                    title="新建会话"
+                  >
+                    {isAsr ? <IconPlus /> : '新建会话'}
                   </button>
+                  {isAsr ? (
+                    <button
+                      type="button"
+                      className="btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain"
+                      disabled={phase !== 'idle' || workspacePickLoading}
+                      onClick={() => openSessionPicker('asr')}
+                      aria-label="选择已有会话"
+                      title="选择已有会话"
+                    >
+                      <IconClock />
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -2437,6 +2652,7 @@ export default function HomePage() {
                     className="btn-editor-clear"
                     onClick={clearEditor}
                     title="清空编辑区"
+                    aria-label="清空编辑区"
                   >
                     清空
                   </button>
@@ -2486,28 +2702,6 @@ export default function HomePage() {
                     spellCheck={false}
                   />
                 </div>
-                {quickInputs.length > 0 ? (
-                  <div className="quick-input-strip" role="toolbar" aria-label="快捷上下文">
-                    <span className="quick-input-strip-label">上下文</span>
-                    <div className="quick-input-tags">
-                      {quickInputs.map((q) => (
-                        <button
-                          key={q.id}
-                          type="button"
-                          className="quick-input-tag"
-                          title={
-                            q.content && q.content.length > 100
-                              ? `${q.content.slice(0, 100)}…`
-                              : q.content || q.label
-                          }
-                          onClick={() => insertQuickContent(q.content)}
-                        >
-                          {q.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
                 <div className="editor-bottom-composite">
                   {listening && isAsr ? (
                     <div className="editor-recording-strip" aria-live="polite">
@@ -2604,19 +2798,25 @@ export default function HomePage() {
                           type="button"
                           className="btn-editor-primary"
                           disabled={
-                            copyBusy ||
-                            !`${editorContent}${partialText || ''}`.trim() ||
-                            (isCliWorkbench && !cursorTriadReady)
+                            isCliWorkbench
+                              ? !!cursorRunActiveSessionId
+                                ? false
+                                : copyBusy ||
+                                  !`${editorContent}${partialText || ''}`.trim() ||
+                                  !cursorTriadReady
+                              : copyBusy || !`${editorContent}${partialText || ''}`.trim()
                           }
                           title={
-                            isCliWorkbench && !cursorTriadReady
+                            isCliWorkbench && !cursorRunActiveSessionId && !cursorTriadReady
                               ? cursorWorkbenchReadinessHint ||
                                 '请补全「入参」中的模型、工作空间等'
                               : undefined
                           }
-                          onClick={submitCliPrimary}
+                          onClick={() =>
+                            cursorRunActiveSessionId ? void onCursorStopRunClick() : void submitCliPrimary()
+                          }
                         >
-                          {copyBusy ? '…' : '发送'}
+                          {cursorRunActiveSessionId ? '停止' : copyBusy ? '…' : '发送'}
                         </button>
                       </div>
                     ) : isHttp ? (
@@ -2680,101 +2880,128 @@ export default function HomePage() {
         {isAgent ? (
           <aside className="agent-panel agent-panel--cursor-workbench" aria-label="对话">
             <div className="cursor-workbench-top">
-              <div className="cursor-workbench-toolbar" aria-label="会话操作">
-                <div className="cursor-workbench-toolbar-left">
-                  <button
-                    type="button"
-                    className="btn-cursor-toolbar"
-                    disabled={phase !== 'idle'}
-                    onClick={onNewAsrSession}
-                  >
-                    新建会话
-                  </button>
-                  <select
-                    key={`agent-${workbenchSessionAttachSelectKey}`}
-                    className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar"
-                    aria-label="打开已有会话到新标签"
-                    value=""
-                    disabled={phase !== 'idle'}
-                    onFocus={() => {
-                      if (phase !== 'idle' || workspacePickLoading) return;
-                      loadWorkspacePickSessions();
-                    }}
-                    onChange={(e) => {
-                      const v = e.target.value.trim();
-                      if (v) {
-                        assignAsrSession(v);
-                        setWorkbenchSessionAttachSelectKey((n) => n + 1);
-                        setStatus('已选择已有会话，对话与段落将归入该会话');
-                      }
-                    }}
-                    title={workspacePickErr || undefined}
-                  >
-                    <option value="">已有会话…</option>
-                    {workspacePickOptions.map((s) => {
-                      const id = String(s.id ?? '');
-                      return (
-                        <option key={id} value={id}>
-                          {formatWorkbenchSessionLabel(s)}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-                <div className="cursor-workbench-toolbar-right">
-                  <button
-                    type="button"
-                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost"
-                    onClick={clearAgentChat}
-                  >
-                    清空消息
-                  </button>
-                </div>
-              </div>
-              <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
+              <select
+                ref={agentSessionAttachRef}
+                key={`agent-${workbenchSessionAttachSelectKey}`}
+                className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar sr-only-select"
+                aria-label="打开已有会话到新标签"
+                value=""
+                disabled={phase !== 'idle'}
+                onFocus={() => {
+                  if (phase !== 'idle' || workspacePickLoading) return;
+                  loadWorkspacePickSessions();
+                }}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (v) {
+                    assignAsrSession(v);
+                    setWorkbenchSessionAttachSelectKey((n) => n + 1);
+                    setStatus('已选择已有会话，对话与段落将归入该会话');
+                  }
+                }}
+                title={workspacePickErr || undefined}
+              >
+                <option value="">已有会话…</option>
+                {workspacePickOptions.map((s) => {
+                  const id = String(s.id ?? '');
+                  return (
+                    <option key={id} value={id}>
+                      {formatWorkbenchSessionLabel(s)}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="cursor-workbench-tabstrip cursor-workbench-tabstrip--with-actions" role="tablist" aria-label="会话">
+                <button
+                  type="button"
+                  className="cursor-workbench-collapse-toggle"
+                  aria-label={inputPaneCollapsed ? '展开输入区' : '折叠输入区'}
+                  title={inputPaneCollapsed ? '展开输入区' : '折叠输入区'}
+                  onClick={() => setInputPaneCollapsed((v) => !v)}
+                >
+                  <IconSidebarToggle collapsed={inputPaneCollapsed} />
+                </button>
+                {inputPaneCollapsed ? (
+                  <div className="cursor-workbench-center-controls">
+                    <button
+                      type="button"
+                      className={`play-toggle ${listening ? 'recording' : ''}`}
+                      onClick={toggleRecord}
+                      aria-label={listening ? '停止识别' : '开始识别'}
+                    >
+                      {listening ? <IconPause /> : <IconPlay />}
+                    </button>
+                    <div className="cursor-workbench-center-mode-select">
+                      <WorkModeSelect
+                        modes={modes}
+                        value={activeModeId}
+                        onChange={onSelectMode}
+                        onAddCustom={openAddCustomModeModal}
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 <div
                   className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
                 >
-                  {workbenchSplitTabIds.length === 0 ? (
-                    <p className="cursor-workbench-strip-meta">暂无会话</p>
-                  ) : (
-                    workbenchSplitTabIds.map((tid) => {
-                      const active = String(asrSessionId || '') === String(tid);
-                      return (
-                        <div
-                          key={tid}
-                          className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
-                          role="none"
+                  {workbenchSplitTabIds.map((tid) => {
+                    const active = String(asrSessionId || '') === String(tid);
+                    return (
+                      <div
+                        key={tid}
+                        className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
+                        role="none"
+                      >
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          className="cursor-workbench-tab-main"
+                          title={formatWorkbenchSessionLabel(
+                            workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                              id: tid,
+                            }
+                          )}
+                          onClick={() => assignAsrSession(tid)}
                         >
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            className="cursor-workbench-tab-main"
-                            title={formatWorkbenchSessionLabel(
-                              workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
-                                id: tid,
-                              }
-                            )}
-                            onClick={() => assignAsrSession(tid)}
-                          >
-                            {getCursorTabTitle(tid)}
-                          </button>
-                          <button
-                            type="button"
-                            className="cursor-workbench-tab-close"
-                            aria-label={`关闭 ${getCursorTabTitle(tid)}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void closeCursorWorkbenchTab(tid);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
+                          {getCursorTabTitle(tid)}
+                        </button>
+                        <button
+                          type="button"
+                          className="cursor-workbench-tab-close"
+                          aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void closeCursorWorkbenchTab(tid);
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="cursor-workbench-tabstrip-actions">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain"
+                    disabled={phase !== 'idle'}
+                    onClick={onNewAsrSession}
+                    aria-label="新建会话"
+                    title="新建会话"
+                  >
+                    <IconPlus />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain"
+                    disabled={phase !== 'idle' || workspacePickLoading}
+                    onClick={() => openSessionPicker('agent')}
+                    aria-label="选择已有会话"
+                    title="选择已有会话"
+                  >
+                    <IconClock />
+                  </button>
                 </div>
               </div>
             </div>
@@ -2847,6 +3074,7 @@ export default function HomePage() {
                 })
               )}
             </div>
+            {renderCollapsedOutputComposer()}
           </aside>
         ) : isCliWorkbench ? (
           <aside
@@ -2854,151 +3082,145 @@ export default function HomePage() {
             aria-label="对话"
           >
             <div className="cursor-workbench-top">
-              <div className="cursor-workbench-toolbar" aria-label="会话操作">
-                <div className="cursor-workbench-toolbar-left">
-                  <button
-                    type="button"
-                    className="btn-cursor-toolbar"
-                    disabled={phase !== 'idle'}
-                    onClick={onNewAsrSession}
-                  >
-                    新建会话
-                  </button>
-                  <select
-                    key={workbenchSessionAttachSelectKey}
-                    className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar"
-                    aria-label="打开已有会话到新标签"
-                    value=""
-                    disabled={phase !== 'idle'}
-                    onFocus={() => {
-                      if (phase !== 'idle' || workspacePickLoading) return;
-                      loadWorkspacePickSessions();
-                    }}
-                    onChange={(e) => {
-                      const v = e.target.value.trim();
-                      if (v) {
-                        assignAsrSession(v);
-                        setWorkbenchSessionAttachSelectKey((n) => n + 1);
-                        setStatus('已选择已有会话，段落将写入该会话');
-                      }
-                    }}
-                    title={workspacePickErr || undefined}
-                  >
-                    <option value="">已有会话…</option>
-                    {workspacePickOptions.map((s) => {
-                      const id = String(s.id ?? '');
-                      return (
-                        <option key={id} value={id}>
-                          {formatWorkbenchSessionLabel(s)}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-                <div className="cursor-workbench-toolbar-right">
-                  <button
-                    type="button"
-                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost btn-danger-text"
-                    disabled={!cursorRunActiveSessionId}
-                    onClick={() => void onCursorStopRunClick()}
-                    aria-label="停止服务端 Cursor CLI 子进程"
-                  >
-                    停止运行
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-cursor-toolbar btn-cursor-toolbar--ghost"
-                    onClick={() => {
-                      const rsid = cursorRunActiveSessionIdRef.current;
-                      if (rsid) {
-                        void apiCursorStop(rsid, cursorRunCliKindRef.current).catch(() => {});
-                        setCursorRunActiveSessionId(null);
-                        cursorRunActiveSessionIdRef.current = null;
-                        setCursorWorkbenchBusySessionId(null);
-                        setCursorStreamLoading(false);
-                      }
-                      setCursorTailInfo('');
-                      setCursorTailError('');
-                      setCursorPendingUserPrompt(null);
-                      setCursorAwaitingCliPaste(false);
-                      const sid =
-                        asrSessionId && SESSION_UUID_RE.test(String(asrSessionId))
-                          ? String(asrSessionId)
-                          : null;
-                      if (sid) {
-                        cursorTabOutputCacheRef.current.set(sid, {
-                          tailInfo: '',
-                          tailError: '',
-                          pending: null,
-                        });
-                      }
-                    }}
-                  >
-                    清空输出
-                  </button>
-                </div>
-              </div>
-              {!cursorUseSessionRail ? (
-                <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
+              <select
+                ref={cliSessionAttachRef}
+                key={workbenchSessionAttachSelectKey}
+                className="cursor-workbench-session-attach cursor-workbench-session-attach--toolbar sr-only-select"
+                aria-label="打开已有会话到新标签"
+                value=""
+                disabled={phase !== 'idle'}
+                onFocus={() => {
+                  if (phase !== 'idle' || workspacePickLoading) return;
+                  loadWorkspacePickSessions();
+                }}
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  if (v) {
+                    assignAsrSession(v);
+                    setWorkbenchSessionAttachSelectKey((n) => n + 1);
+                    setStatus('已选择已有会话，段落将写入该会话');
+                  }
+                }}
+                title={workspacePickErr || undefined}
+              >
+                <option value="">已有会话…</option>
+                {workspacePickOptions.map((s) => {
+                  const id = String(s.id ?? '');
+                  return (
+                    <option key={id} value={id}>
+                      {formatWorkbenchSessionLabel(s)}
+                    </option>
+                  );
+                })}
+              </select>
+              <div className="cursor-workbench-tabstrip cursor-workbench-tabstrip--with-actions" role="tablist" aria-label="会话">
+                <button
+                  type="button"
+                  className="cursor-workbench-collapse-toggle"
+                  aria-label={inputPaneCollapsed ? '展开输入区' : '折叠输入区'}
+                  title={inputPaneCollapsed ? '展开输入区' : '折叠输入区'}
+                  onClick={() => setInputPaneCollapsed((v) => !v)}
+                >
+                  <IconSidebarToggle collapsed={inputPaneCollapsed} />
+                </button>
+                {inputPaneCollapsed ? (
+                  <div className="cursor-workbench-center-controls">
+                    <button
+                      type="button"
+                      className={`play-toggle ${listening ? 'recording' : ''}`}
+                      onClick={toggleRecord}
+                      aria-label={listening ? '停止识别' : '开始识别'}
+                    >
+                      {listening ? <IconPause /> : <IconPlay />}
+                    </button>
+                    <div className="cursor-workbench-center-mode-select">
+                      <WorkModeSelect
+                        modes={modes}
+                        value={activeModeId}
+                        onChange={onSelectMode}
+                        onAddCustom={openAddCustomModeModal}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                {!cursorUseSessionRail ? (
                   <div
                     className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
                   >
-                    {workbenchSplitTabIds.length === 0 ? (
-                      <p className="cursor-workbench-strip-meta">暂无会话</p>
-                    ) : (
-                      workbenchSplitTabIds.map((tid) => {
-                        const active = String(asrSessionId || '') === String(tid);
-                        return (
-                          <div
-                            key={tid}
-                            className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
-                            role="none"
+                    {workbenchSplitTabIds.map((tid) => {
+                      const active = String(asrSessionId || '') === String(tid);
+                      return (
+                        <div
+                          key={tid}
+                          className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
+                          role="none"
+                        >
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            className="cursor-workbench-tab-main"
+                            title={formatWorkbenchSessionLabel(
+                              workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                                id: tid,
+                              }
+                            )}
+                            onClick={() => assignAsrSession(tid)}
                           >
-                            <button
-                              type="button"
-                              role="tab"
-                              aria-selected={active}
-                              className="cursor-workbench-tab-main"
-                              title={formatWorkbenchSessionLabel(
-                                workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
-                                  id: tid,
-                                }
-                              )}
-                              onClick={() => assignAsrSession(tid)}
-                            >
-                              {getCursorTabTitle(tid)}
-                            </button>
-                            <button
-                              type="button"
-                              className="cursor-workbench-tab-close"
-                              aria-label={`关闭 ${getCursorTabTitle(tid)}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void closeCursorWorkbenchTab(tid);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })
-                    )}
+                            {getCursorTabTitle(tid)}
+                          </button>
+                          <button
+                            type="button"
+                            className="cursor-workbench-tab-close"
+                            aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void closeCursorWorkbenchTab(tid);
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
+                ) : (
+                  <div className="cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip cursor-workbench-tabs-scroll--actions-only" />
+                )}
+                <div className="cursor-workbench-tabstrip-actions">
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain"
+                    disabled={phase !== 'idle'}
+                    onClick={onNewAsrSession}
+                    aria-label="新建会话"
+                    title="新建会话"
+                  >
+                    <IconPlus />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-cursor-toolbar btn-cursor-toolbar--icon btn-cursor-toolbar--icon-plain"
+                    disabled={phase !== 'idle' || workspacePickLoading}
+                    onClick={() => openSessionPicker('cli')}
+                    aria-label="选择已有会话"
+                    title="选择已有会话"
+                  >
+                    <IconClock />
+                  </button>
                 </div>
-              ) : null}
+              </div>
             </div>
             {cursorUseSessionRail ? (
-              <div className="cursor-workbench-3col-shell">
-                <div className="cursor-workbench-3col-body">
+              <>
+                <div className="cursor-workbench-3col-shell">
+                  <div className="cursor-workbench-3col-body">
                   <nav
                     className="cursor-workbench-col cursor-workbench-col--sessions"
                     aria-label="会话列表"
                   >
                     <div className="cursor-workbench-session-rail-inner" role="tablist">
-                      {workbenchSplitTabIds.length === 0 ? (
-                        <p className="cursor-workbench-strip-meta">暂无会话</p>
-                      ) : (
-                        workbenchSplitTabIds.map((tid) => {
+                      {workbenchSplitTabIds.map((tid) => {
                           const active = String(asrSessionId || '') === String(tid);
                           const runningHere =
                             cursorStreamLoading &&
@@ -3040,8 +3262,7 @@ export default function HomePage() {
                               </button>
                             </div>
                           );
-                        })
-                      )}
+                        })}
                     </div>
                   </nav>
                   <div className="cursor-workbench-col cursor-workbench-col--conversation">
@@ -3151,8 +3372,10 @@ export default function HomePage() {
                       ) : null}
                     </div>
                   </div>
+                  </div>
                 </div>
-              </div>
+                {renderCollapsedOutputComposer()}
+              </>
             ) : (
               <>
                 {asrSessionId &&
@@ -3244,6 +3467,7 @@ export default function HomePage() {
                     <p className="agent-empty">发送第一条消息后，回复会显示在这里。</p>
                   ) : null}
                 </div>
+                {renderCollapsedOutputComposer()}
               </>
             )}
           </aside>
@@ -3264,11 +3488,36 @@ export default function HomePage() {
         onCliWorkspaceChange={onCliWorkspaceChange}
         onCliAngleSlotsChange={onCliAngleSlotsChange}
         applyWorkbenchCliExample={applyWorkbenchCliExample}
-        onCliEnvChange={(v) => {
-          if (!activeMode?.id) return;
-          setModes(updateCliModeFields(activeMode.id, { cliEnv: v }));
-        }}
       />
+
+      <AppModalShell
+        open={quickInputsModalOpen}
+        onOpenChange={setQuickInputsModalOpen}
+        titleId="quick-input-select-title"
+        title="选择上下文"
+        description="点击一个标签将内容插入编辑区。"
+      >
+        <div className="quick-input-select-list" role="toolbar" aria-label="快捷上下文选择">
+          {quickInputs.map((q) => (
+            <button
+              key={q.id}
+              type="button"
+              className="quick-input-tag"
+              title={
+                q.content && q.content.length > 100
+                  ? `${q.content.slice(0, 100)}…`
+                  : q.content || q.label
+              }
+              onClick={() => {
+                insertQuickContent(q.content);
+                setQuickInputsModalOpen(false);
+              }}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
+      </AppModalShell>
 
       <HomeWorkbenchAddModeModal
         customModes={customModes}

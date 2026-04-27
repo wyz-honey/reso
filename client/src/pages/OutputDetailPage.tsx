@@ -281,7 +281,7 @@ function AsrBuiltinDetail({ row, onSaved }) {
           <OutputVoiceControlSection
             value={voiceControl}
             onChange={setVoiceControl}
-            lead="说话识别到标准模式时：自动保存或只等你点提交。"
+            lead="说话识别到自然语言识别时：自动保存或只等你点提交。"
           />
           <div className="settings-actions">
             <button type="submit" className="btn-primary-nav">

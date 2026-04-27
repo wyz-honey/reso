@@ -195,6 +195,17 @@ export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
+/** partial 仅做轻清洗：保留实时短字反馈，避免被语气词清洗吞掉 */
+export function normalizePartialTranscriptText(raw: string): string {
+  let t = String(raw ?? '');
+  t = stripInvisibleChars(t);
+  t = stripMiddleNoisePunctuation(t);
+  t = normalizeAsrPeriodClusters(t);
+  t = softenOralPeriodOveruse(t);
+  t = stripLeadingSentencePunctuation(t);
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
 /**
  * 将新识别片段拼入正文前：去掉「段首孤儿句号」、以及与上一段末尾重复的句号（避免 。。）
  */

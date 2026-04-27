@@ -1,9 +1,7 @@
 // @ts-nocheck
 import { AppModalShell } from '@/components/ui/AppModalShell';
 import CliAngleSlotsEditor from '../../components/CliAngleSlotsEditor';
-import CliEnvEditor from '../../components/CliEnvEditor';
 import CliInstructionHeader from '../../components/CliInstructionHeader';
-import { normalizeCliEnvRecord } from '../../cliEnv';
 import { mergeAngleSlotsWithDefaults } from '../../cliSubstitute';
 import { DEFAULT_CLI_TEMPLATE } from '../../workModes';
 import {
@@ -26,7 +24,6 @@ export default function HomeWorkbenchCliParamsModal({
   onCliWorkspaceChange,
   onCliAngleSlotsChange,
   applyWorkbenchCliExample,
-  onCliEnvChange,
 }) {
   return (
     <AppModalShell
@@ -168,17 +165,6 @@ export default function HomeWorkbenchCliParamsModal({
             </label>
           </div>
         )}
-        <div className="cli-params-section-env">
-          <h3 className="cli-params-subtitle">环境变量（可选）</h3>
-          <p className="cli-params-modal-env-note">在「目标」里也能改；这里和命令一起调方便。</p>
-          <CliEnvEditor
-            value={normalizeCliEnvRecord(activeMode?.cliEnv)}
-            onChange={(v) => {
-              if (!activeMode?.id) return;
-              onCliEnvChange(v);
-            }}
-          />
-        </div>
         <div className="modal-actions">
           <button type="button" className="btn-primary-nav" onClick={onClose}>
             完成
