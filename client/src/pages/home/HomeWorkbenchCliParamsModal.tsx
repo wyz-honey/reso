@@ -160,8 +160,8 @@ export default function HomeWorkbenchCliParamsModal({
                 onChange={(e) => onCliWorkspaceChange(e.target.value)}
                 placeholder={
                   cliWorkspaceFallbackStr.trim()
-                    ? `未填时用服务端：${cliWorkspaceFallbackStr}`
-                    : '/path/to/project'
+                    ? `不填则用：${cliWorkspaceFallbackStr}`
+                    : '项目文件夹路径'
                 }
                 spellCheck={false}
               />
@@ -170,9 +170,7 @@ export default function HomeWorkbenchCliParamsModal({
         )}
         <div className="cli-params-section-env">
           <h3 className="cli-params-subtitle">环境变量（可选）</h3>
-          <p className="cli-params-modal-env-note">
-            在「目标管理」中也可编辑；此处方便与 CLI 模板一并调整。
-          </p>
+          <p className="cli-params-modal-env-note">在「目标」里也能改；这里和命令一起调方便。</p>
           <CliEnvEditor
             value={normalizeCliEnvRecord(activeMode?.cliEnv)}
             onChange={(v) => {

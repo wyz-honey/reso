@@ -100,6 +100,17 @@ function stripMiddleNoisePunctuation(text: string): string {
   return s;
 }
 
+/**
+ * 合并相邻的句号类符号（含全角/半角混用、中间夹空白），避免「。。。」「。 。」等
+ */
+function normalizeAsrPeriodClusters(text: string): string {
+  let s = text;
+  s = s.replace(/[。．]{2,}/g, '。');
+  s = s.replace(/(?:[。．](?:\s|\u3000)*){2,}/g, '。');
+  s = s.replace(/([。．])\s+(?=[。．])/g, '$1');
+  return s;
+}
+
 /** 去掉首尾常见单字语气词（与「过滤语气词」互补，在客户端再清一层） */
 function stripDefaultOralFillerEdges(text: string): string {
   let s = text;
@@ -152,17 +163,65 @@ function stripOralEdges(text: string, phrases: string[]): string {
   return t.trim();
 }
 
+/** 识别结果段首不应出现句号/叹问号（模型或拼接 glitch） */
+function stripLeadingSentencePunctuation(text: string): string {
+  return text.replace(/^[。．.！!？?…\s\u3000]+/u, '');
+}
+
+/**
+ * 口语识别里常出现「每个短分句都给句号」：
+ * 例：我们。现在。开始。=> 我们，现在，开始。
+ * 仅在「句号两侧都是中文且前一段较短」时柔化为逗号，降低误伤完整书面句。
+ */
+function softenOralPeriodOveruse(text: string): string {
+  return text.replace(/([\u4e00-\u9fff]{1,10})[。．.](?=[\u4e00-\u9fff])/gu, '$1，');
+}
+
 export function normalizeTranscriptText(raw: string, v: VoiceSettings): string {
   let t = String(raw ?? '');
   t = stripInvisibleChars(t);
   t = stripMiddleNoisePunctuation(t);
+  t = normalizeAsrPeriodClusters(t);
+  t = softenOralPeriodOveruse(t);
   t = stripDefaultOralFillerEdges(t);
   if (v.oralStripEnabled) {
     const phrases = oralStripPhrasesFromText(v.oralStripPhrasesText);
     if (phrases.length) t = stripOralEdges(t, phrases);
     else t = stripOralEdges(t, []);
   }
+  t = normalizeAsrPeriodClusters(t);
+  t = softenOralPeriodOveruse(t);
+  t = stripLeadingSentencePunctuation(t);
   return t.replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
+ * 将新识别片段拼入正文前：去掉「段首孤儿句号」、以及与上一段末尾重复的句号（避免 。。）
+ */
+const LEAD_SENT_PUNCT_RE = /^[。．.！!？?…\s\u3000]+/u;
+
+export function dedupeTranscriptJoin(prev: string, piece: string): string {
+  const p = String(piece ?? '');
+  const prevTrim = String(prev ?? '').replace(/\s+$/u, '');
+  if (!prevTrim) {
+    return p.replace(LEAD_SENT_PUNCT_RE, '').trimStart();
+  }
+  let out = p;
+  const tr = out.trimStart();
+  if (!tr) return p;
+  if (/[。！？….!?…]\s*$/.test(prevTrim) && /^[。．.]/.test(tr)) {
+    out = out.replace(/^[。．.\s\u3000]+/u, '').trimStart();
+  } else if (/[。！？….!?…]\s*$/.test(prevTrim) && /^[！!？?]/.test(out.trimStart())) {
+    out = out.replace(/^[！!？?\s\u3000]+/u, '').trimStart();
+  } else if (
+    prevTrim &&
+    !/[。！？….!?…，,、]\s*$/u.test(prevTrim) &&
+    /^[。．.](?:[\s\u3000]*)(?=[\u4e00-\u9fff])/u.test(out.trimStart())
+  ) {
+    /** 上一段未停句却新出「。+汉字」多为误加句号 */
+    out = out.replace(/^[。．.\s\u3000]+/u, '').trimStart();
+  }
+  return out;
 }
 
 function normalizeState(partial: Partial<VoiceSettings> & Record<string, unknown>): VoiceSettings {

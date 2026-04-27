@@ -11,6 +11,8 @@ import ModelProvidersPage from './pages/ModelProvidersPage';
 import QuickInputsPage from './pages/QuickInputsPage';
 import SessionsPage from './pages/SessionsPage';
 import TasksPage from './pages/TasksPage';
+import OrganizationsPage from './pages/OrganizationsPage';
+import OrganizationDetailPage from './pages/OrganizationDetailPage';
 import TaskDetailPage from './pages/TaskDetailPage';
 import DrawingPage from './pages/DrawingPage';
 import ClientSettingsDbSync from './components/ClientSettingsDbSync';
@@ -41,15 +43,24 @@ function IconTasks() {
   );
 }
 
-/** 输入 · 快捷上下文：闪电 */
+/** 团队 · 组织 */
+function IconTeamOrg() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 9v0M9 13v0M9 17v0M15 11v0M15 15v0" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** 输入 · 上下文：关联节点 */
 function IconQuick() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path
-        d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <circle cx="6" cy="7" r="2.2" />
+      <circle cx="18" cy="7" r="2.2" />
+      <circle cx="12" cy="17" r="2.2" />
+      <path d="M8.2 8.3 10.5 15M15.8 8.3 13.5 15M8.2 7h7.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -68,7 +79,7 @@ function IconConversation() {
   );
 }
 
-/** 输出 · 目标管理：靶心 */
+/** 输出 · 目标：靶心 */
 function IconTarget() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
@@ -135,10 +146,17 @@ export default function App() {
             <IconWorkbench />
             <span className="nav-link-label">工作台</span>
           </NavLink>
-          <NavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <WorkbenchGuardedNavLink to="/tasks" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <IconTasks />
             <span className="nav-link-label">任务</span>
-          </NavLink>
+          </WorkbenchGuardedNavLink>
+          <div className="sidebar-nav-group">
+            <div className="sidebar-nav-label">团队</div>
+            <WorkbenchGuardedNavLink to="/organizations" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <IconTeamOrg />
+              <span className="nav-link-label">组织</span>
+            </WorkbenchGuardedNavLink>
+          </div>
           <div className="sidebar-nav-group">
             <div className="sidebar-nav-label">输入</div>
             <WorkbenchGuardedNavLink to="/sessions" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
@@ -150,7 +168,7 @@ export default function App() {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               <IconQuick />
-              <span className="nav-link-label">快捷上下文</span>
+              <span className="nav-link-label">上下文</span>
             </WorkbenchGuardedNavLink>
           </div>
           <div className="sidebar-nav-group">
@@ -161,7 +179,7 @@ export default function App() {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               <IconTarget />
-              <span className="nav-link-label">目标管理</span>
+              <span className="nav-link-label">目标</span>
             </WorkbenchGuardedNavLink>
           </div>
           <div className="sidebar-nav-group">
@@ -191,6 +209,8 @@ export default function App() {
           <Route path="/quick-inputs" element={<QuickInputsPage />} />
           <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/organizations/:orgId" element={<OrganizationDetailPage />} />
+          <Route path="/organizations" element={<OrganizationsPage />} />
           <Route path="/sessions" element={<SessionsPage />} />
           <Route path="/outputs/:outputId" element={<OutputDetailPage />} />
           <Route path="/outputs" element={<OutputsPage />} />

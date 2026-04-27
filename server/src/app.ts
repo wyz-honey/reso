@@ -10,6 +10,7 @@ import { createChatRouter } from '~/routes/chat.ts';
 import { createSessionsRouter, handleSessionsBatchDelete } from '~/routes/sessions.ts';
 import { createQuickInputsRouter } from '~/routes/quickInputs.ts';
 import { createTasksRouter } from '~/routes/tasks.ts';
+import { createOrganizationsRouter } from '~/routes/organizations.ts';
 import { createCursorRouter } from '~/routes/cursor.ts';
 import { createMetaRouter } from '~/routes/meta.ts';
 import { createClientSettingsRouter } from '~/routes/clientSettings.ts';
@@ -43,6 +44,7 @@ export function createApp(db: AppDb | null): express.Application {
   app.use('/api/sessions', createSessionsRouter(db));
   app.use(createQuickInputsRouter(db));
   app.use(createTasksRouter(db));
+  app.use(createOrganizationsRouter(db));
   app.use(createCursorRouter());
 
   const clientDist = resolveClientDist();

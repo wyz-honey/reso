@@ -25,9 +25,11 @@ export type TaskRow = {
   tags: string[];
   expected_at: string | null;
   scheduled_at: string | null;
+  schedule_cron: string | null;
   target_output_id: string | null;
   source_paragraph_id: string | null;
   batch_key: string | null;
+  organization_id: string | null;
   created_at: string;
   updated_at: string;
   /** 前端路由，便于书签与分享 */
@@ -72,6 +74,15 @@ function assertStatus(s: string): asserts s is TaskStatus {
   }
 }
 
+function parseScheduleCronField(raw: unknown): string | null {
+  if (raw == null || raw === '') return null;
+  if (typeof raw !== 'string') throw new AppError('invalid schedule_cron', 400);
+  const s = raw.trim();
+  if (!s) return null;
+  if (s.length > 512) throw new AppError('schedule_cron too long', 400);
+  return s;
+}
+
 function mapRow(r: {
   id: string;
   name: string;
@@ -81,9 +92,11 @@ function mapRow(r: {
   tags: unknown;
   expected_at: Date | null;
   scheduled_at: Date | null;
+  schedule_cron?: string | null;
   target_output_id: string | null;
   source_paragraph_id: string | null;
   batch_key: string | null;
+  organization_id?: string | null;
   created_at: Date;
   updated_at: Date;
 }): TaskRow {
@@ -103,9 +116,12 @@ function mapRow(r: {
     tags,
     expected_at: tsIso(r.expected_at),
     scheduled_at: tsIso(r.scheduled_at),
+    schedule_cron:
+      r.schedule_cron != null && String(r.schedule_cron).trim() ? String(r.schedule_cron).trim() : null,
     target_output_id: r.target_output_id != null ? String(r.target_output_id) : null,
     source_paragraph_id: r.source_paragraph_id != null ? String(r.source_paragraph_id) : null,
     batch_key: r.batch_key != null && String(r.batch_key).trim() ? String(r.batch_key).trim() : null,
+    organization_id: r.organization_id != null ? String(r.organization_id) : null,
     created_at: tsIsoRequired(r.created_at),
     updated_at: tsIsoRequired(r.updated_at),
     nav_path: `/tasks/${id}`,
@@ -143,9 +159,11 @@ export async function listTasks(
       tags: tasks.tags,
       expected_at: tasks.expectedAt,
       scheduled_at: tasks.scheduledAt,
+      schedule_cron: tasks.scheduleCron,
       target_output_id: tasks.targetOutputId,
       source_paragraph_id: tasks.sourceParagraphId,
       batch_key: tasks.batchKey,
+      organization_id: tasks.organizationId,
       created_at: tasks.createdAt,
       updated_at: tasks.updatedAt,
     })
@@ -167,9 +185,11 @@ export async function listTasks(
       tags: r.tags,
       expected_at: r.expected_at,
       scheduled_at: r.scheduled_at,
+      schedule_cron: r.schedule_cron,
       target_output_id: r.target_output_id,
       source_paragraph_id: r.source_paragraph_id,
       batch_key: r.batch_key,
+      organization_id: r.organization_id,
       created_at: r.created_at,
       updated_at: r.updated_at,
     })
@@ -188,9 +208,11 @@ export async function getTaskById(db: AppDb, id: string): Promise<TaskRow | null
       tags: tasks.tags,
       expected_at: tasks.expectedAt,
       scheduled_at: tasks.scheduledAt,
+      schedule_cron: tasks.scheduleCron,
       target_output_id: tasks.targetOutputId,
       source_paragraph_id: tasks.sourceParagraphId,
       batch_key: tasks.batchKey,
+      organization_id: tasks.organizationId,
       created_at: tasks.createdAt,
       updated_at: tasks.updatedAt,
     })
@@ -207,9 +229,11 @@ export async function getTaskById(db: AppDb, id: string): Promise<TaskRow | null
     tags: r.tags,
     expected_at: r.expected_at,
     scheduled_at: r.scheduled_at,
+    schedule_cron: r.schedule_cron,
     target_output_id: r.target_output_id,
     source_paragraph_id: r.source_paragraph_id,
     batch_key: r.batch_key,
+    organization_id: r.organization_id,
     created_at: r.created_at,
     updated_at: r.updated_at,
   });
@@ -233,9 +257,14 @@ export async function createTask(db: AppDb, body: Record<string, unknown>): Prom
   if (description.length > 20000) {
     throw new AppError('description too long', 400);
   }
-  const instruction = typeof body.instruction === 'string' ? body.instruction : '';
+  const rawInstr = typeof body.instruction === 'string' ? body.instruction : '';
+  const instruction = rawInstr.trim()
+    ? rawInstr
+    : description.trim()
+      ? description
+      : name;
   if (!instruction.trim()) {
-    throw new AppError('instruction required', 400);
+    throw new AppError('instruction or description required', 400);
   }
   if (instruction.length > 200000) {
     throw new AppError('instruction too long', 400);
@@ -261,6 +290,15 @@ export async function createTask(db: AppDb, body: Record<string, unknown>): Prom
   }
   const batchKeyRaw = typeof body.batch_key === 'string' ? body.batch_key.trim() : '';
   const batchKey = batchKeyRaw && batchKeyRaw.length <= 200 ? batchKeyRaw : null;
+  const scheduleCron = parseScheduleCronField(body.schedule_cron);
+
+  let finalInstruction = instruction;
+  let organizationId: string | null = null;
+  if (body.organization_id != null && String(body.organization_id).trim()) {
+    const oid = String(body.organization_id).trim();
+    if (!isValidUuid(oid)) throw new AppError('invalid organization_id', 400);
+    organizationId = oid;
+  }
 
   const id = randomUUID();
   const [row] = await db
@@ -269,14 +307,16 @@ export async function createTask(db: AppDb, body: Record<string, unknown>): Prom
       id,
       name,
       description,
-      instruction,
+      instruction: finalInstruction,
       status,
       tags,
       expectedAt: expectedAt === undefined ? null : expectedAt,
       scheduledAt: scheduledAt === undefined ? null : scheduledAt,
+      scheduleCron,
       targetOutputId,
       sourceParagraphId,
       batchKey,
+      organizationId,
     })
     .returning({
       id: tasks.id,
@@ -287,9 +327,11 @@ export async function createTask(db: AppDb, body: Record<string, unknown>): Prom
       tags: tasks.tags,
       expected_at: tasks.expectedAt,
       scheduled_at: tasks.scheduledAt,
+      schedule_cron: tasks.scheduleCron,
       target_output_id: tasks.targetOutputId,
       source_paragraph_id: tasks.sourceParagraphId,
       batch_key: tasks.batchKey,
+      organization_id: tasks.organizationId,
       created_at: tasks.createdAt,
       updated_at: tasks.updatedAt,
     });
@@ -344,6 +386,10 @@ export async function patchTask(db: AppDb, id: string, patch: Record<string, unk
     updates.scheduledAt = v === undefined ? null : v;
     touched = true;
   }
+  if (patch.schedule_cron !== undefined) {
+    updates.scheduleCron = parseScheduleCronField(patch.schedule_cron);
+    touched = true;
+  }
   if (patch.target_output_id !== undefined) {
     const t = patch.target_output_id;
     if (t === null || t === '') {
@@ -379,6 +425,17 @@ export async function patchTask(db: AppDb, id: string, patch: Record<string, unk
     }
     touched = true;
   }
+  if (patch.organization_id !== undefined) {
+    const t = patch.organization_id;
+    if (t === null || t === '') {
+      updates.organizationId = null;
+    } else if (typeof t === 'string' && isValidUuid(t.trim())) {
+      updates.organizationId = t.trim();
+    } else {
+      throw new AppError('invalid organization_id', 400);
+    }
+    touched = true;
+  }
 
   if (!touched) {
     throw new AppError('no fields to update', 400);
@@ -397,9 +454,11 @@ export async function patchTask(db: AppDb, id: string, patch: Record<string, unk
       tags: tasks.tags,
       expected_at: tasks.expectedAt,
       scheduled_at: tasks.scheduledAt,
+      schedule_cron: tasks.scheduleCron,
       target_output_id: tasks.targetOutputId,
       source_paragraph_id: tasks.sourceParagraphId,
       batch_key: tasks.batchKey,
+      organization_id: tasks.organizationId,
       created_at: tasks.createdAt,
       updated_at: tasks.updatedAt,
     });

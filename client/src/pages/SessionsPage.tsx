@@ -361,10 +361,7 @@ export default function SessionsPage() {
           <div className="sessions-toolbar">
             <div className="sessions-title-wrap">
               <h1 className="sessions-title">会话</h1>
-              <p className="sessions-subtitle">
-                列表按<strong>创建时间倒序</strong>（新的在上）；标题与摘要取该会话内<strong>最新保存</strong>
-                的一段。可搜索、筛选、分页。
-              </p>
+              <p className="sessions-subtitle">按时间看会话，可搜可筛。</p>
             </div>
             <button type="button" className="btn-primary-nav" disabled={busy} onClick={onNewSession}>
               新建会话
@@ -379,7 +376,7 @@ export default function SessionsPage() {
                 className="sessions-search-input"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="会话 ID 或段落正文…"
+                placeholder="编号或正文…"
                 autoComplete="off"
               />
             </label>

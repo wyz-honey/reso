@@ -27,13 +27,17 @@ function eventId(): string {
   return `event_${randomUUID().replace(/-/g, '')}`;
 }
 
-function pickTranscriptText(data: Record<string, unknown>): string {
-  const t = data.text ?? data.transcript ?? data.delta;
-  if (typeof t === 'string') return t;
-  if (t != null && typeof (t as { toString?: () => string }).toString === 'function') {
-    return String(t);
+/** 空字符串不参与 ?? 合并；Realtime 的 delta 事件常在 `delta` 上给增量而 `text` 为空 */
+function firstNonEmptyString(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.length) return v;
   }
   return '';
+}
+
+function itemTranscriptionKey(msg: Record<string, unknown>): string {
+  const id = msg.item_id;
+  return typeof id === 'string' && id.trim() ? id.trim() : '_';
 }
 
 function pickErrorMessage(data: Record<string, unknown>): string {
@@ -75,6 +79,8 @@ export function connectQwenAsrRealtime(
   const pendingAudio: Buffer[] = [];
   let finishRequested = false;
   let doneEmitted = false;
+  /** 同一 item 上 delta 为增量，需累加后下发 partial，客户端才有「边听边出字」 */
+  const partialTranscriptByItem = new Map<string, string>();
 
   const emitDoneOnce = () => {
     if (doneEmitted) return;
@@ -153,23 +159,46 @@ export function connectQwenAsrRealtime(
       return;
     }
 
-    if (
-      typ === 'conversation.item.input_audio_transcription.text' ||
-      typ === 'conversation.item.input_audio_transcription.delta'
-    ) {
-      const text = pickTranscriptText(msg);
-      if (text) emit({ type: 'transcript', text, sentenceEnd: false });
+    if (typ === 'conversation.item.input_audio_transcription.delta') {
+      const key = itemTranscriptionKey(msg);
+      const chunk = firstNonEmptyString(msg.delta, msg.text, msg.transcript);
+      if (!chunk) return;
+      const prev = partialTranscriptByItem.get(key) ?? '';
+      const next = prev + chunk;
+      partialTranscriptByItem.set(key, next);
+      emit({ type: 'transcript', text: next, sentenceEnd: false });
+      return;
+    }
+
+    if (typ === 'conversation.item.input_audio_transcription.text') {
+      const key = itemTranscriptionKey(msg);
+      const t = firstNonEmptyString(msg.text, msg.transcript, msg.delta);
+      if (!t) return;
+      const prev = partialTranscriptByItem.get(key) ?? '';
+      let next = t;
+      if (prev && !t.startsWith(prev)) {
+        if (t.length < prev.length && prev.startsWith(t)) {
+          next = t;
+        } else if (!prev.startsWith(t)) {
+          next = prev + t;
+        }
+      }
+      partialTranscriptByItem.set(key, next);
+      emit({ type: 'transcript', text: next, sentenceEnd: false });
       return;
     }
 
     if (typ === 'conversation.item.input_audio_transcription.completed') {
-      const text = pickTranscriptText(msg);
+      const key = itemTranscriptionKey(msg);
+      const text = firstNonEmptyString(msg.transcript, msg.text, msg.delta);
+      partialTranscriptByItem.delete(key);
       if (text) emit({ type: 'transcript', text, sentenceEnd: true });
       return;
     }
 
     if (typ === 'session.finished') {
-      const text = pickTranscriptText(msg);
+      const text = firstNonEmptyString(msg.transcript, msg.text, msg.delta);
+      partialTranscriptByItem.clear();
       if (text.trim()) {
         emit({ type: 'transcript', text: text.trim(), sentenceEnd: true });
       }

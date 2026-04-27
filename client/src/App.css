@@ -323,6 +323,11 @@
   border-right: 1px solid var(--border);
 }
 
+/* Cursor/Qoder 工作台 ≥2 会话：侧栏内三列，略加宽侧栏以免对话/输出过窄 */
+.home-card--with-agent.home-card--cursor-session-rail {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, min(58vw, 760px));
+}
+
 @media (max-width: 640px) {
   .home-card--with-agent {
     grid-template-columns: 1fr;
@@ -1407,11 +1412,47 @@
   word-break: break-word;
 }
 
+.editor-recording-partial__text--placeholder {
+  color: var(--text-tertiary, rgba(100, 100, 100, 0.72));
+  font-style: italic;
+}
+
 .editor-bottom-end {
   flex-shrink: 0;
   margin-left: auto;
   display: flex;
   align-items: center;
+  gap: 0.45rem;
+}
+
+.btn-editor-mute {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: #ffffff;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.15s;
+}
+
+.btn-editor-mute:hover {
+  color: var(--text);
+  border-color: rgba(0, 0, 0, 0.18);
+  background: #fafafa;
+}
+
+.btn-editor-mute:active {
+  transform: scale(0.96);
+}
+
+.btn-editor-mute--on {
+  color: #b45309;
+  border-color: rgba(180, 83, 9, 0.38);
+  background: rgba(255, 247, 237, 0.96);
 }
 
 .btn-editor-clear {
@@ -2077,6 +2118,10 @@
   transition: background 0.18s, border-color 0.18s, transform 0.1s;
 }
 
+a.sessions-list-row {
+  text-decoration: none;
+}
+
 .sessions-list-row:hover {
   background: var(--bg-hover);
   border-color: rgba(0, 0, 0, 0.085);
@@ -2084,6 +2129,44 @@
 
 .sessions-list-row:active {
   transform: scale(0.99);
+}
+
+.sessions-list-row--selected {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.07), rgba(255, 255, 255, 0.96));
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18);
+}
+
+.sessions-org-detail-split {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-strong);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.02), transparent);
+}
+
+.sessions-org-detail-split .sessions-list-body-pad {
+  max-height: min(52vh, 560px);
+  overflow-y: auto;
+}
+
+.sessions-detail-headline {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.sessions-detail-section-title {
+  margin: 1.15rem 0 0.45rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.sessions-list-row--static {
+  cursor: default;
+}
+
+.sessions-list-row--static:hover {
+  transform: none;
 }
 
 .sessions-list-row-main {
@@ -2589,6 +2672,188 @@
   background: rgba(255, 255, 255, 0.35);
 }
 
+/* ≥2 会话：对话 | 纵向会话列表 | CLI 输出 */
+.agent-panel--cursor-workbench-3col {
+  flex: 1;
+  min-height: 0;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-3col-shell {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-3col-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(10.5rem, 12rem) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-col {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-col--conversation {
+  border-right: 1px solid var(--border);
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-col--sessions {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.22);
+  border-right: 1px solid var(--border);
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-session-rail-inner {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.45rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  scrollbar-width: thin;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-row--active {
+  border-color: var(--accent-bright, #c4a574);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 1px rgba(196, 165, 116, 0.22);
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.42rem 0.35rem 0.42rem 0.45rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  font-family: var(--font);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-row--active .cursor-workbench-rail-main {
+  color: var(--text);
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-pulse {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-top: 0.2rem;
+  border-radius: 50%;
+  background: var(--accent-bright, #c4a574);
+  box-shadow: 0 0 0 2px rgba(196, 165, 116, 0.35);
+  animation: cursor-rail-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes cursor-rail-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-close {
+  flex-shrink: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1;
+  font-weight: 700;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.agent-panel--cursor-workbench-3col .cursor-workbench-rail-close:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.agent-panel--cursor-workbench-3col .agent-messages--cursor-workbench-split {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 900px) {
+  .agent-panel--cursor-workbench-3col .cursor-workbench-3col-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(5.5rem, 28vh) minmax(0, 38vh) minmax(0, 1fr);
+  }
+
+  .agent-panel--cursor-workbench-3col .cursor-workbench-col--sessions {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 28vh;
+  }
+
+  .agent-panel--cursor-workbench-3col .cursor-workbench-col--conversation {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 38vh;
+  }
+
+  .agent-panel--cursor-workbench-3col .cursor-workbench-session-rail-inner {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.35rem;
+    align-items: stretch;
+    padding: 0.35rem 0.45rem;
+  }
+
+  .agent-panel--cursor-workbench-3col .cursor-workbench-rail-row {
+    flex-direction: row;
+    flex-shrink: 0;
+    max-width: 11rem;
+  }
+}
+
 /* RESO / Cursor：对话顶栏统一（上行操作，下行 Tab 或说明） */
 .cursor-workbench-toolbar {
   display: flex;
@@ -2925,7 +3190,38 @@
   flex-direction: column;
   gap: 0.45rem;
   padding: 0.2rem 0 0.15rem;
-  min-height: 2.4rem;
+  min-height: 2.75rem;
+}
+
+.agent-stream-skeleton-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.1rem;
+}
+
+.agent-stream-skeleton-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: agent-stream-spin 0.72s linear infinite;
+}
+
+.agent-stream-skeleton-label {
+  font-size: 0.82rem;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.02em;
+}
+
+@keyframes agent-stream-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .agent-stream-skeleton-line {

@@ -1,5 +1,6 @@
 // @ts-nocheck — large workbench surface; tighten types incrementally
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import {
   apiAgentChatTurnStream,
@@ -37,6 +38,7 @@ import {
   getAsrLanguageHintsArray,
   getVoiceSettings,
   matchesEndPhrase,
+  dedupeTranscriptJoin,
   normalizeTranscriptText,
   stripMatchedPhrase,
 } from '../stores/voiceSettingsStore';
@@ -104,7 +106,7 @@ import {
   computeWorkbenchCliCommand,
   consumeCursorOmitResumeAndBuildCommand,
 } from './home/workbenchCliCommand';
-import { IconPlay, IconPause, IconCliParams } from './home/HomeWorkbenchIcons';
+import { IconPlay, IconPause, IconCliParams, IconMic, IconMicMuted } from './home/HomeWorkbenchIcons';
 import HomeWorkbenchAddModeModal from './home/HomeWorkbenchAddModeModal';
 import HomeWorkbenchCliParamsModal from './home/HomeWorkbenchCliParamsModal';
 import { useHomeWorkbenchBootstrap } from './home/useHomeWorkbenchBootstrap';
@@ -245,8 +247,6 @@ export default function HomePage() {
   const workletNodeRef = useRef(null);
   const sourceRef = useRef(null);
   const analyserRef = useRef(null);
-  const partialUiRafRef = useRef(null);
-  const pendingPartialUiRef = useRef('');
   const dbSessionIdRef = useRef(null);
   /** 与 cursorSessionFilePaths 对应的 `会话id:cursor|qoder`，切换内置 CLI 目标时需重拉路径 */
   const cursorPathsFetchKeyRef = useRef(null);
@@ -264,6 +264,9 @@ export default function HomePage() {
   const activeModeIdRef = useRef(activeModeId);
   const runAutoSubmitRef = useRef(null);
   const stopRecognitionRef = useRef(() => {});
+  /** 输入静音：关轨道 + 不发 PCM，避免环境声触发识别/自动发送 */
+  const [micInputMuted, setMicInputMuted] = useState(false);
+  const micInputMutedRef = useRef(false);
   const cursorTailInfoRef = useRef('');
   const cursorTailErrorRef = useRef('');
   const cursorTailPollBaselineRef = useRef({ info: '', error: '' });
@@ -294,6 +297,32 @@ export default function HomePage() {
   useEffect(() => {
     isCliWorkbenchRef.current = isCliWorkbench;
   }, [isCliWorkbench]);
+
+  useLayoutEffect(() => {
+    micInputMutedRef.current = micInputMuted;
+  }, [micInputMuted]);
+
+  /** 与 ref 同步，供 startRecognition 在 setState 前拿到麦克风流后立即应用 */
+  const syncMicTracksFromMuteRef = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream?.getAudioTracks) return;
+    const enabled = !micInputMutedRef.current;
+    for (const t of stream.getAudioTracks()) {
+      t.enabled = enabled;
+    }
+  }, []);
+
+  useEffect(() => {
+    syncMicTracksFromMuteRef();
+    if (micInputMuted) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, [micInputMuted, phase, syncMicTracksFromMuteRef]);
+
+  useEffect(() => {
+    if (phase === 'idle') setMicInputMuted(false);
+  }, [phase]);
 
   const {
     quickInputs,
@@ -649,15 +678,25 @@ export default function HomePage() {
   const cursorStreamFormatHint = useMemo(() => {
     if (!String(cursorTailInfo || '').trim()) return null;
     if (looksLikeCursorStreamJson(cursorTailInfo)) return null;
-    return '当前输出不是 Cursor stream-json（NDJSON），已按原文展示。其他 CLI 可后续接入独立解析规则。';
+    return '无法按分行解析，已按整段原文显示。';
   }, [cursorTailInfo]);
+
+  /** 本轮是否已有 CLI 流式内容（有则不再占位的「准备/等待」条） */
+  const hasCursorCliStreamContent = useMemo(
+    () =>
+      Boolean(String(cursorTailInfo || '').trim() || String(sanitizedCursorStderr || '').trim()),
+    [cursorTailInfo, sanitizedCursorStderr]
+  );
 
   const cursorSidePanelLoading =
     Boolean(isCliWorkbench) &&
     cursorStreamLoading &&
+    !hasCursorCliStreamContent &&
     (cursorAwaitingCliPaste ||
       (cursorWorkbenchBusySessionId != null &&
-        String(cursorWorkbenchBusySessionId) === String(asrSessionId)));
+        String(cursorWorkbenchBusySessionId) === String(asrSessionId)) ||
+      (cursorRunActiveSessionId != null &&
+        String(cursorRunActiveSessionId) === String(asrSessionId)));
 
   useEffect(() => {
     if (!cursorPendingUserPrompt?.trim()) return;
@@ -681,6 +720,7 @@ export default function HomePage() {
     sanitizedCursorStderr,
     cursorPendingUserPrompt,
     cursorParsedOutput.blocks.length,
+    cursorSidePanelLoading,
   ]);
 
   const cliWorkspaceFallbackStr =
@@ -857,7 +897,10 @@ export default function HomePage() {
   useEffect(() => {
     const el = agentMessagesRef.current;
     if (!el || !isAgent) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    const last = agentMessages[agentMessages.length - 1];
+    const pending =
+      last?.role === 'assistant' && Boolean((last as { streamPending?: boolean }).streamPending);
+    el.scrollTo({ top: el.scrollHeight, behavior: pending ? 'auto' : 'smooth' });
   }, [agentMessages, isAgent]);
 
   useEffect(() => {
@@ -971,6 +1014,7 @@ export default function HomePage() {
     clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = null;
     const cfg = modeVoiceRef.current;
+    if (micInputMutedRef.current) return;
     if (phaseRef.current !== 'recording') return;
     const agentMode = isAgentRef.current;
     if (cfg.endMode !== END_MODES.silence && cfg.endMode !== END_MODES.both) return;
@@ -1006,6 +1050,7 @@ export default function HomePage() {
   }, []);
 
   const tryPhraseAuto = useCallback((fullEditorText) => {
+    if (micInputMutedRef.current) return;
     if (!isAgentRef.current && cursorVoiceBlockRef.current) return;
     const cfg = modeVoiceRef.current;
     if (cfg.endMode !== END_MODES.phrase && cfg.endMode !== END_MODES.both) return;
@@ -1019,6 +1064,7 @@ export default function HomePage() {
 
   /** 停止识别时补检：结束词可能只在 partial、未单独出一句 sentenceEnd */
   const tryPhraseAutoOnBuffers = useCallback(() => {
+    if (micInputMutedRef.current) return;
     if (!isAgentRef.current && cursorVoiceBlockRef.current) return;
     const cfg = modeVoiceRef.current;
     if (cfg.endMode !== END_MODES.phrase && cfg.endMode !== END_MODES.both) return;
@@ -1034,21 +1080,16 @@ export default function HomePage() {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'ready') {
-          setStatus('正在聆听…');
           return;
         }
         if (msg.type === 'transcript') {
           const vox = getVoiceSettings();
           if (msg.sentenceEnd) {
-            if (partialUiRafRef.current != null) {
-              cancelAnimationFrame(partialUiRafRef.current);
-              partialUiRafRef.current = null;
-            }
-            pendingPartialUiRef.current = '';
-            const piece = normalizeTranscriptText(msg.text || '', vox);
+            const normalizedPiece = normalizeTranscriptText(msg.text || '', vox);
             partialTextRef.current = '';
             setPartialText('');
             setEditorContent((prev) => {
+              const piece = dedupeTranscriptJoin(prev, normalizedPiece);
               const next = prev ? `${prev}${piece}` : piece;
               queueMicrotask(() => {
                 editorContentRef.current = next;
@@ -1058,30 +1099,16 @@ export default function HomePage() {
               return next;
             });
           } else {
-            pendingPartialUiRef.current = normalizeTranscriptText(msg.text || '', vox);
-            if (partialUiRafRef.current == null) {
-              partialUiRafRef.current = requestAnimationFrame(() => {
-                partialUiRafRef.current = null;
-                const t = pendingPartialUiRef.current;
-                partialTextRef.current = t;
-                setPartialText(t);
-                queueMicrotask(() => {
-                  scheduleSilenceTimer();
-                });
-              });
-            }
+            const t = normalizeTranscriptText(msg.text || '', vox);
+            partialTextRef.current = t;
+            setPartialText(t);
+            queueMicrotask(() => {
+              scheduleSilenceTimer();
+            });
           }
           return;
         }
         if (msg.type === 'done') {
-          if (partialUiRafRef.current != null) {
-            cancelAnimationFrame(partialUiRafRef.current);
-            partialUiRafRef.current = null;
-          }
-          if (pendingPartialUiRef.current !== '') {
-            partialTextRef.current = pendingPartialUiRef.current;
-          }
-          pendingPartialUiRef.current = '';
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;
           tryPhraseAutoOnBuffers();
@@ -1093,11 +1120,6 @@ export default function HomePage() {
           return;
         }
         if (msg.type === 'error') {
-          if (partialUiRafRef.current != null) {
-            cancelAnimationFrame(partialUiRafRef.current);
-            partialUiRafRef.current = null;
-          }
-          pendingPartialUiRef.current = '';
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = null;
           setStatus(msg.message || '错误');
@@ -1152,6 +1174,7 @@ export default function HomePage() {
     workletNodeRef.current = node;
     node.port.onmessage = (ev) => {
       if (ws.readyState !== WebSocket.OPEN) return;
+      if (micInputMutedRef.current) return;
       const pcm = ev.data?.pcm;
       if (pcm instanceof Uint8Array) ws.send(pcm);
     };
@@ -1195,16 +1218,16 @@ export default function HomePage() {
     setActiveModeId(id);
     setStatus(
       next?.kind === 'agent'
-        ? '右侧为对话区；可「新建会话」或「已有会话」切换；语音在短暂停顿后会自动发送（无需说结束词）'
+        ? '右边聊天；可新建或选用已有会话；说完停一下会自动发。'
         : next?.kind === 'http'
-          ? '填写上方请求 URL 与协议；正文会随 OpenAI Chat 或 AGUI 体 POST 到该地址'
+          ? '填好上面的地址和协议，说的话会发到对方。'
           : next?.kind === 'cli'
             ? next?.cliVariant === 'cursor' || next?.cliVariant === 'qoder'
-              ? '右侧为对话区；备齐后复制指令到终端执行，文件输出会作为助手回复刷新'
+              ? '右边聊天；点发送后按提示去终端粘贴运行。'
               : next?.cliVariant === 'xiaoai'
-                ? '编辑完整指令；尖括号在下方配置，或用 {{paragraph}} 等；确认后点「复制指令」'
-                : '编辑上方 CLI 模板与工作区；正文为段落占位符，点「复制命令」'
-            : '点击「新建会话」或开始识别；可选下拉中的已有会话以继续同一会话'
+                ? '写好命令，尖括号在下面填；好了再点复制。'
+                : '写好命令和工作目录，再点复制。'
+            : '新建会话或开始识别；也可选已有会话接着用。'
     );
   };
 
@@ -1236,7 +1259,7 @@ export default function HomePage() {
           const sid = await apiCreateSession();
           assignAsrSession(sid);
         } catch (e) {
-          setStatus(e.message || '无法创建会话，请检查数据库配置');
+          setStatus(e.message || '暂时建不了会话，请稍后再试');
           setPhase('idle');
           return;
         }
@@ -1256,6 +1279,7 @@ export default function HomePage() {
       return;
     }
     streamRef.current = stream;
+    syncMicTracksFromMuteRef();
 
     const ws = new WebSocket(wsUrl());
     ws.binaryType = 'arraybuffer';
@@ -1278,7 +1302,7 @@ export default function HomePage() {
         ws.onerror = () => reject(new Error('WebSocket'));
       });
     } catch {
-      setStatus('无法连接后端，请确认 npm run dev 已启动且根目录 .env 中 PORT 与 Vite 代理一致');
+      setStatus('连不上服务，请确认已在本地启动并刷新页面。');
       setPhase('idle');
       cleanupAudio();
       return;
@@ -1388,6 +1412,8 @@ export default function HomePage() {
   const toggleRecord = () => {
     if (phase === 'recording') {
       stopRecognition();
+    } else if (phase === 'connecting') {
+      abortAsrSession();
     } else if (phase === 'idle') {
       startRecognition();
     }
@@ -1398,7 +1424,7 @@ export default function HomePage() {
     setPartialText('');
     setStatus(
       isAsr || isCli || isHttp
-        ? '已清空编辑区（未写入数据库）'
+        ? '已清空编辑区（尚未保存到会话）'
         : isAgent
           ? '已清空输入框'
           : '已清空'
@@ -1408,7 +1434,7 @@ export default function HomePage() {
   const performAsrSave = useCallback(async (segment) => {
     const sid = dbSessionIdRef.current;
     if (!sid) {
-      setStatus('请先「新建会话」或点击开始识别，以关联数据库会话');
+      setStatus('请先新建会话或点开始识别。');
       return false;
     }
     const text = String(segment || '').trim();
@@ -1455,7 +1481,7 @@ export default function HomePage() {
           assignAsrSession(ensuredSid);
           loadWorkspacePickSessions();
         } catch (e) {
-          setStatus(e.message || '无法创建会话，请检查数据库配置');
+          setStatus(e.message || '暂时建不了会话，请稍后再试');
           return false;
         }
       }
@@ -1465,25 +1491,27 @@ export default function HomePage() {
       agentSendingKeysRef.current.add(chatKey);
       setAgentSendingByKey((s) => ({ ...s, [chatKey]: true }));
       setStatus('正在请求回复…');
-      setChatByModeId((s) => {
-        const p = s[chatKey] || [];
-        return {
-          ...s,
-          [chatKey]: [
-            ...p,
-            { role: 'user', content: text },
-            { role: 'assistant', content: '', streamPending: true },
-          ],
-        };
+      flushSync(() => {
+        setChatByModeId((s) => {
+          const p = s[chatKey] || [];
+          return {
+            ...s,
+            [chatKey]: [
+              ...p,
+              { role: 'user', content: text },
+              { role: 'assistant', content: '', streamPending: true },
+            ],
+          };
+        });
       });
       try {
         let prefix = '';
         try {
           const saved = await apiSaveParagraph(ensuredSid, text);
           const n = saved.paragraphIndex;
-          prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+          prefix = typeof n === 'number' ? `第 ${n} 段已保存 · ` : '';
         } catch (e) {
-          prefix = `段落未入库（${e.message || '错误'}）· `;
+          prefix = `段落未保存（${e.message || '错误'}）· `;
         }
         try {
           await navigator.clipboard.writeText(text);
@@ -1535,7 +1563,7 @@ export default function HomePage() {
                 agStream.text += '\n\n';
               }
             }
-            if (ev.type === 'TEXT_MESSAGE_CONTENT' && typeof ev.delta === 'string' && ev.delta) {
+            if (ev.type === 'TEXT_MESSAGE_CONTENT' && typeof ev.delta === 'string' && ev.delta.length > 0) {
               agStream.text += ev.delta;
               setChatByModeId((s) => {
                 const list = [...(s[chatKey] || [])];
@@ -1629,7 +1657,7 @@ export default function HomePage() {
             }
           }
         );
-        setStatus(phaseRef.current === 'recording' ? '正在聆听…' : '可继续输入或说话');
+        setStatus('可继续输入或说话');
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : '发送失败';
@@ -1648,7 +1676,7 @@ export default function HomePage() {
           }
           return { ...s, [chatKey]: list };
         });
-        setStatus(phaseRef.current === 'recording' ? '正在聆听…' : '可继续输入或说话');
+        setStatus('可继续输入或说话');
         return false;
       } finally {
         agentSendingKeysRef.current.delete(chatKey);
@@ -1669,7 +1697,7 @@ export default function HomePage() {
       if (!text) return false;
       const url = (activeMode.requestUrl || '').trim();
       if (!url) {
-        setStatus('请填写 HTTP 请求 URL（可在上方或「输出」页配置）');
+        setStatus('请先填好上面的请求地址（也可在「目标」里配）。');
         return false;
       }
       const sid0 = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
@@ -1677,7 +1705,7 @@ export default function HomePage() {
       if (httpSendingKeysRef.current.has(httpKey)) return false;
       httpSendingKeysRef.current.add(httpKey);
       setHttpSendingByKey((s) => ({ ...s, [httpKey]: true }));
-      setStatus('正在复制、保存段落并发送 HTTP 请求…');
+      setStatus('正在复制、保存并发送…');
       try {
         const sid = dbSessionIdRef.current;
         let prefix = '';
@@ -1685,12 +1713,12 @@ export default function HomePage() {
           try {
             const saved = await apiSaveParagraph(sid, text);
             const n = saved.paragraphIndex;
-            prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+            prefix = typeof n === 'number' ? `第 ${n} 段已保存 · ` : '';
           } catch (e) {
-            prefix = `段落未入库（${e.message || '错误'}）· `;
+            prefix = `段落未保存（${e.message || '错误'}）· `;
           }
         } else {
-          prefix = '未绑定数据库会话，段落未入库 · ';
+          prefix = '未选会话，段落未保存 · ';
         }
         try {
           await navigator.clipboard.writeText(text);
@@ -1721,15 +1749,15 @@ export default function HomePage() {
         });
         const raw = await res.text();
         if (!res.ok) {
-          setStatus(`${prefix}HTTP ${res.status}：${raw.slice(0, 120)}`);
+          setStatus(`${prefix}对方返回错误（${res.status}）：${raw.slice(0, 120)}`);
           return false;
         }
         setEditorContent('');
         setPartialText('');
-        setStatus(`${prefix}请求成功（${raw.length ? raw.slice(0, 80) + (raw.length > 80 ? '…' : '') : '空响应'}）`);
+        setStatus(`${prefix}已收到回复（${raw.length ? raw.slice(0, 80) + (raw.length > 80 ? '…' : '') : '空内容'}）`);
         return true;
       } catch (e) {
-        setStatus(e.message || 'HTTP 请求失败');
+        setStatus(e.message || '请求失败');
         return false;
       } finally {
         httpSendingKeysRef.current.delete(httpKey);
@@ -1907,6 +1935,8 @@ export default function HomePage() {
         setCursorQuietPrepare(true);
         setCursorAwaitingCliPaste(true);
         setCursorStreamLoading(true);
+        setCursorTailInfo('');
+        setCursorTailError('');
         setCursorPendingUserPrompt(text);
         setEditorContent('');
         setPartialText('');
@@ -1951,12 +1981,12 @@ export default function HomePage() {
             try {
               const saved = await apiSaveParagraph(sid, text);
               const n = saved.paragraphIndex;
-              prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+              prefix = typeof n === 'number' ? `第 ${n} 段已保存 · ` : '';
             } catch (e) {
-              prefix = `段落未入库（${e.message || '错误'}）· `;
+              prefix = `段落未保存（${e.message || '错误'}）· `;
             }
           } else {
-            prefix = '未绑定数据库会话，段落未入库 · ';
+            prefix = '未选会话，段落未保存 · ';
           }
           cursorTailPollBaselineRef.current = {
             info: cursorTailInfoRef.current,
@@ -1982,7 +2012,7 @@ export default function HomePage() {
             setCursorAwaitingCliPaste(false);
             setEditorContent(text);
             setPartialText('');
-            setStatus(`${prefix}${e.message || '子进程启动失败'}`);
+            setStatus(`${prefix}${e.message || '后台启动失败'}`);
             return false;
           }
           setCursorRunActiveSessionId(p.sid);
@@ -1993,7 +2023,7 @@ export default function HomePage() {
           } catch {
             /* 服务端已在跑，剪贴板失败非致命 */
           }
-          setStatus(`${prefix}已在服务端启动子进程；可点「停止运行」或复制指令`);
+          setStatus(`${prefix}已在后台跑起来；可点「停止运行」或再复制指令`);
           try {
             await apiAppendCliWorkbenchChatMessage(p.sid, activeMode.id, 'user', text);
             const { messages } = await fetchCliWorkbenchChat(p.sid, activeMode.id);
@@ -2035,12 +2065,12 @@ export default function HomePage() {
           try {
             const saved = await apiSaveParagraph(sid, text);
             const n = saved.paragraphIndex;
-            prefix = typeof n === 'number' ? `第 ${n} 段已入库 · ` : '';
+            prefix = typeof n === 'number' ? `第 ${n} 段已保存 · ` : '';
           } catch (e) {
-            prefix = `段落未入库（${e.message || '错误'}）· `;
+            prefix = `段落未保存（${e.message || '错误'}）· `;
           }
         } else {
-          prefix = '未绑定数据库会话，段落未入库 · ';
+          prefix = '未选会话，段落未保存 · ';
         }
         try {
           await navigator.clipboard.writeText(computed.cmd);
@@ -2078,6 +2108,7 @@ export default function HomePage() {
       const trigger = options.trigger === 'phrase' ? 'phrase' : 'silence';
       const text = String(segment || '').trim();
       if (!text) return;
+      if (micInputMutedRef.current) return;
       if (autoSubmitLockRef.current) return;
       const sid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
       const actKey = agentChatStateKey(activeModeIdRef.current, sid || null);
@@ -2118,7 +2149,9 @@ export default function HomePage() {
 
   const copyAndSaveParagraph = () => {
     if (copyBusy) return Promise.resolve();
-    return performAsrSave(`${editorContent}${partialText || ''}`.trim());
+    return performAsrSave(`${editorContent}${partialText || ''}`.trim()).then((ok) => {
+      if (ok && isAsr) setMicInputMuted(true);
+    });
   };
 
   const copyCliCommandOnly = () => {
@@ -2156,7 +2189,7 @@ export default function HomePage() {
         await apiDeleteChatMessages(tid);
       }
       setChatByModeId((s) => ({ ...s, [key]: [] }));
-      setStatus('已清空本条线程下的消息（线程仍在，可继续聊）');
+      setStatus('已清空本条对话记录（还可继续聊）');
     } catch (e) {
       setStatus(e.message || '清空失败');
     }
@@ -2178,7 +2211,7 @@ export default function HomePage() {
         ui.setNewXiaoaiTemplate('');
         ui.setNewCliAngleSlotsPreset(null);
         ui.setModeModalOpen(false);
-        setStatus('已添加 CLI 输出模式');
+        setStatus('已添加终端目标');
       } else {
         const { modes: next, newId } = addCustomHttpMode({
           name: ui.newModeName,
@@ -2192,7 +2225,7 @@ export default function HomePage() {
         ui.setNewHttpProtocol('openai_chat');
         ui.setNewCliAngleSlotsPreset(null);
         ui.setModeModalOpen(false);
-        setStatus('已添加 HTTP 输出模式');
+        setStatus('已添加网络目标');
       }
     } catch (err) {
       setStatus(err.message || '添加失败');
@@ -2218,7 +2251,10 @@ export default function HomePage() {
 
   const recording = phase === 'recording';
   const busy = phase === 'connecting';
+  const listening = recording || busy;
   const customModes = modes.filter((m) => !m.builtIn);
+  /** Cursor/Qoder 工作台：≥2 个会话时用「对话 | 纵向会话 | 输出」三栏，避免与横向 Tab 抢宽 */
+  const cursorUseSessionRail = isCliWorkbench && workbenchSplitTabIds.length >= 2;
 
   const onCliTemplateChange = (v) => {
     if (!activeMode?.id || activeMode.kind !== 'cli') return;
@@ -2267,7 +2303,7 @@ export default function HomePage() {
       className={`home-page home-page--compact ${isAgent || isCliWorkbench ? 'home-page--split' : ''}`}
     >
       <div
-        className={`home-card ${isAgent || isCliWorkbench ? 'home-card--with-agent' : ''}`}
+        className={`home-card ${isAgent || isCliWorkbench ? 'home-card--with-agent' : ''}${cursorUseSessionRail ? ' home-card--cursor-session-rail' : ''}`}
       >
         <div className="home-card-main">
           <header className="top">
@@ -2275,12 +2311,11 @@ export default function HomePage() {
               <div className="top-spacer" aria-hidden />
               <button
                 type="button"
-                className={`play-toggle ${recording ? 'recording' : ''}`}
-                disabled={busy}
+                className={`play-toggle ${listening ? 'recording' : ''}`}
                 onClick={toggleRecord}
-                aria-label={recording ? '停止识别' : '开始识别'}
+                aria-label={listening ? '停止识别' : '开始识别'}
               >
-                {recording ? <IconPause /> : <IconPlay />}
+                {listening ? <IconPause /> : <IconPlay />}
               </button>
               <div className="top-mode-controls">
                 <WorkModeSelect
@@ -2294,7 +2329,7 @@ export default function HomePage() {
             <p className="top-voice-hint" title="来自当前目标的「识别结束策略」配置">
               {voiceControlHint}
             </p>
-            <p className={`status ${recording ? 'recording' : ''}`}>{status}</p>
+            <p className={`status ${listening ? 'recording' : ''}`}>{status}</p>
           </header>
 
           <section className="bottom">
@@ -2319,7 +2354,7 @@ export default function HomePage() {
                       const v = e.target.value.trim();
                       if (!v) {
                         clearAsrSession();
-                        setStatus('未绑定会话；开始识别时将自动创建新会话');
+                        setStatus('还没选会话；开始识别时会自动新建一个');
                         return;
                       }
                       assignAsrSession(v);
@@ -2333,7 +2368,7 @@ export default function HomePage() {
                     aria-label="选择会话（段落写入目标）"
                     title={workspacePickErr || undefined}
                   >
-                    <option value="">未绑定会话</option>
+                    <option value="">未选会话</option>
                     {workspacePickOptions.map((s) => {
                       const id = String(s.id ?? '');
                       return (
@@ -2383,16 +2418,12 @@ export default function HomePage() {
                     value={activeMode.httpProtocol || 'openai_chat'}
                     onChange={(e) => onHttpProtocolChange(e.target.value)}
                   >
-                    <option value="openai_chat">OpenAI Chat</option>
-                    <option value="agui">AGUI</option>
+                    <option value="openai_chat">常见聊天接口</option>
+                    <option value="agui">流式多事件</option>
                   </select>
                 </label>
                 <p className="cli-mode-hint">
-                  OpenAI Chat：POST JSON 含 <code className="settings-code">messages</code>（user 一条）与可选{' '}
-                  <code className="settings-code">model</code>（取自设置里的对话模型）。AGUI：发送{' '}
-                  <code className="settings-code">user_message</code> 与{' '}
-                  <code className="settings-code">session_id</code>。注意目标站 CORS；若配置了目标环境变量，会带请求头{' '}
-                  <code className="settings-code">X-Reso-Target-Env</code>（在「目标管理」中编辑）。
+                  填好地址和协议；对方要允许浏览器访问。额外参数在「目标」里配。
                 </p>
               </div>
             ) : null}
@@ -2419,33 +2450,37 @@ export default function HomePage() {
                     onKeyUp={captureEditorSelection}
                     onMouseUp={captureEditorSelection}
                     onKeyDown={(e) => {
-                      if (isCli && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
+                      if (e.key !== 'Enter') return;
+                      if (e.shiftKey) return;
+                      if (e.nativeEvent.isComposing) return;
+                      e.preventDefault();
+                      if (isCli) {
                         submitCliPrimary();
                         return;
                       }
-                      if (isHttp && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
+                      if (isHttp) {
                         submitHttpPrimary();
                         return;
                       }
-                      if (!isAgent) return;
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
+                      if (isAgent) {
                         submitAgentPrimary();
+                        return;
+                      }
+                      if (isAsr) {
+                        copyAndSaveParagraph();
                       }
                     }}
                     placeholder={
                       isAgent
-                        ? '输入问题，或使用上方麦克风转写；⌘/Ctrl + Enter 与底栏「发送」相同…'
+                        ? '输入问题，或使用上方麦克风转写；Enter 发送，Shift+Enter 换行…'
                         : isHttp
-                          ? '识别或输入正文；⌘/Ctrl + Enter 与底栏「发送请求」相同…'
+                          ? '识别或输入正文；Enter 发送请求，Shift+Enter 换行…'
                           : isCli
                             ? isCliWorkbench
-                              ? '识别或输入正文作为 -p 提示词；⌘/Ctrl + Enter 与「发送」相同（保存并复制）…'
+                              ? '识别或输入正文作为 -p 提示词；Enter 发送（保存并复制），Shift+Enter 换行…'
                               : isXiaoaiCli
-                                ? '识别或输入正文；⌘/Ctrl + Enter 与「发送」相同…'
-                                : '识别或输入正文；⌘/Ctrl + Enter 与「发送」相同…'
+                                ? '识别或输入正文；Enter 发送，Shift+Enter 换行…'
+                                : '识别或输入正文；Enter 发送，Shift+Enter 换行…'
                             : '识别结果会出现在这里，也可直接输入或修改文字…'
                     }
                     spellCheck={false}
@@ -2453,7 +2488,7 @@ export default function HomePage() {
                 </div>
                 {quickInputs.length > 0 ? (
                   <div className="quick-input-strip" role="toolbar" aria-label="快捷上下文">
-                    <span className="quick-input-strip-label">快捷上下文</span>
+                    <span className="quick-input-strip-label">上下文</span>
                     <div className="quick-input-tags">
                       {quickInputs.map((q) => (
                         <button
@@ -2474,12 +2509,22 @@ export default function HomePage() {
                   </div>
                 ) : null}
                 <div className="editor-bottom-composite">
-                  {recording ? (
+                  {listening && isAsr ? (
                     <div className="editor-recording-strip" aria-live="polite">
-                      <span className="editor-recording-badge">识别中</span>
+                      <span className="editor-recording-badge">{busy ? '连接中' : '识别中'}</span>
                       <div className="editor-recording-partial">
-                        <span className="editor-recording-partial__text">{partialText}</span>
-                        <VoiceWaveVisualizer active={recording} analyserRef={analyserRef} inline />
+                        <span
+                          className={`editor-recording-partial__text${
+                            partialText ? '' : ' editor-recording-partial__text--placeholder'
+                          }`}
+                        >
+                          {partialText || (busy ? '正在连接识别服务…' : '')}
+                        </span>
+                        <VoiceWaveVisualizer
+                          active={recording && !micInputMuted}
+                          analyserRef={analyserRef}
+                          inline
+                        />
                       </div>
                     </div>
                   ) : (
@@ -2487,14 +2532,28 @@ export default function HomePage() {
                   )}
                   <div className="editor-bottom-end">
                     {isAsr ? (
-                      <button
-                        type="button"
-                        className="btn-editor-primary"
-                        disabled={copyBusy}
-                        onClick={copyAndSaveParagraph}
-                      >
-                        {copyBusy ? '…' : '复制并保存'}
-                      </button>
+                      <>
+                        {listening ? (
+                          <button
+                            type="button"
+                            className={`btn-editor-mute ${micInputMuted ? 'btn-editor-mute--on' : ''}`}
+                            onClick={() => setMicInputMuted((m) => !m)}
+                            aria-pressed={micInputMuted}
+                            title={micInputMuted ? '取消静音（恢复识别）' : '静音（暂停识别输入）'}
+                            aria-label={micInputMuted ? '取消静音' : '静音'}
+                          >
+                            {micInputMuted ? <IconMicMuted /> : <IconMic />}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-editor-primary"
+                          disabled={copyBusy}
+                          onClick={copyAndSaveParagraph}
+                        >
+                          {copyBusy ? '…' : '复制并保存'}
+                        </button>
+                      </>
                     ) : isCli ? (
                       <div className="editor-bottom-cli-actions">
                         {isCliWorkbench ? (
@@ -2529,6 +2588,18 @@ export default function HomePage() {
                         >
                           {copyBusy ? '…' : isXiaoaiCli || isCliWorkbench ? '复制指令' : '复制命令'}
                         </button>
+                        {listening ? (
+                          <button
+                            type="button"
+                            className={`btn-editor-mute ${micInputMuted ? 'btn-editor-mute--on' : ''}`}
+                            onClick={() => setMicInputMuted((m) => !m)}
+                            aria-pressed={micInputMuted}
+                            title={micInputMuted ? '取消静音（恢复识别）' : '静音（暂停识别输入）'}
+                            aria-label={micInputMuted ? '取消静音' : '静音'}
+                          >
+                            {micInputMuted ? <IconMicMuted /> : <IconMic />}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="btn-editor-primary"
@@ -2549,27 +2620,55 @@ export default function HomePage() {
                         </button>
                       </div>
                     ) : isHttp ? (
-                      <button
-                        type="button"
-                        className="btn-editor-primary"
-                        disabled={
-                          httpSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
-                        }
-                        onClick={submitHttpPrimary}
-                      >
-                        {httpSendingCurrent ? '…' : '发送请求'}
-                      </button>
+                      <>
+                        {listening ? (
+                          <button
+                            type="button"
+                            className={`btn-editor-mute ${micInputMuted ? 'btn-editor-mute--on' : ''}`}
+                            onClick={() => setMicInputMuted((m) => !m)}
+                            aria-pressed={micInputMuted}
+                            title={micInputMuted ? '取消静音（恢复识别）' : '静音（暂停识别输入）'}
+                            aria-label={micInputMuted ? '取消静音' : '静音'}
+                          >
+                            {micInputMuted ? <IconMicMuted /> : <IconMic />}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-editor-primary"
+                          disabled={
+                            httpSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
+                          }
+                          onClick={submitHttpPrimary}
+                        >
+                          {httpSendingCurrent ? '…' : '发送请求'}
+                        </button>
+                      </>
                     ) : (
-                      <button
-                        type="button"
-                        className="btn-editor-primary"
-                        disabled={
-                          agentSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
-                        }
-                        onClick={submitAgentPrimary}
-                      >
-                        {agentSendingCurrent ? '…' : '发送'}
-                      </button>
+                      <>
+                        {listening ? (
+                          <button
+                            type="button"
+                            className={`btn-editor-mute ${micInputMuted ? 'btn-editor-mute--on' : ''}`}
+                            onClick={() => setMicInputMuted((m) => !m)}
+                            aria-pressed={micInputMuted}
+                            title={micInputMuted ? '取消静音（恢复识别）' : '静音（暂停识别输入）'}
+                            aria-label={micInputMuted ? '取消静音' : '静音'}
+                          >
+                            {micInputMuted ? <IconMicMuted /> : <IconMic />}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-editor-primary"
+                          disabled={
+                            agentSendingCurrent || !`${editorContent}${partialText || ''}`.trim()
+                          }
+                          onClick={submitAgentPrimary}
+                        >
+                          {agentSendingCurrent ? '…' : '发送'}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -2702,6 +2801,10 @@ export default function HomePage() {
                             </div>
                           ) : streamPending ? (
                             <div className="agent-stream-skeleton" aria-busy="true" aria-label="正在生成回复">
+                              <div className="agent-stream-skeleton-head">
+                                <span className="agent-stream-skeleton-spinner" aria-hidden />
+                                <span className="agent-stream-skeleton-label">正在生成回复…</span>
+                              </div>
                               <span className="agent-stream-skeleton-line" />
                               <span className="agent-stream-skeleton-line agent-stream-skeleton-line--short" />
                             </div>
@@ -2746,7 +2849,10 @@ export default function HomePage() {
             </div>
           </aside>
         ) : isCliWorkbench ? (
-          <aside className="agent-panel agent-panel--cursor-workbench" aria-label="对话">
+          <aside
+            className={`agent-panel agent-panel--cursor-workbench${cursorUseSessionRail ? ' agent-panel--cursor-workbench-3col' : ''}`}
+            aria-label="对话"
+          >
             <div className="cursor-workbench-top">
               <div className="cursor-workbench-toolbar" aria-label="会话操作">
                 <div className="cursor-workbench-toolbar-left">
@@ -2832,147 +2938,314 @@ export default function HomePage() {
                   </button>
                 </div>
               </div>
-              <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
-                <div
-                  className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
-                >
-                  {workbenchSplitTabIds.length === 0 ? (
-                    <p className="cursor-workbench-strip-meta">暂无会话</p>
-                  ) : (
-                    workbenchSplitTabIds.map((tid) => {
-                      const active = String(asrSessionId || '') === String(tid);
-                      return (
-                        <div
-                          key={tid}
-                          className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
-                          role="none"
-                        >
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            className="cursor-workbench-tab-main"
-                            title={formatWorkbenchSessionLabel(
-                              workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
-                                id: tid,
-                              }
-                            )}
-                            onClick={() => assignAsrSession(tid)}
+              {!cursorUseSessionRail ? (
+                <div className="cursor-workbench-tabstrip" role="tablist" aria-label="会话">
+                  <div
+                    className={`cursor-workbench-tabs-scroll cursor-workbench-tabs-scroll--strip ${workbenchSplitTabIds.length === 0 ? 'cursor-workbench-tabs-scroll--vcenter' : ''}`}
+                  >
+                    {workbenchSplitTabIds.length === 0 ? (
+                      <p className="cursor-workbench-strip-meta">暂无会话</p>
+                    ) : (
+                      workbenchSplitTabIds.map((tid) => {
+                        const active = String(asrSessionId || '') === String(tid);
+                        return (
+                          <div
+                            key={tid}
+                            className={`cursor-workbench-tab ${active ? 'cursor-workbench-tab--active' : ''}`}
+                            role="none"
                           >
-                            {getCursorTabTitle(tid)}
-                          </button>
-                          <button
-                            type="button"
-                            className="cursor-workbench-tab-close"
-                            aria-label={`关闭 ${getCursorTabTitle(tid)}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void closeCursorWorkbenchTab(tid);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-            {asrSessionId &&
-            SESSION_UUID_RE.test(String(asrSessionId)) &&
-            !cursorQuietPrepare &&
-            (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
-              <div className="cursor-external-thread-panel">
-                {cursorEnsureStatus === 'loading' ? (
-                  <p className="cursor-external-thread-status">正在准备…</p>
-                ) : (
-                  <div className="cursor-external-thread-error-block">
-                    <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
-                    <button
-                      type="button"
-                      className="btn-editor-secondary"
-                      onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
-                    >
-                      重试
-                    </button>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={active}
+                              className="cursor-workbench-tab-main"
+                              title={formatWorkbenchSessionLabel(
+                                workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                                  id: tid,
+                                }
+                              )}
+                              onClick={() => assignAsrSession(tid)}
+                            >
+                              {getCursorTabTitle(tid)}
+                            </button>
+                            <button
+                              type="button"
+                              className="cursor-workbench-tab-close"
+                              aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void closeCursorWorkbenchTab(tid);
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
-                )}
-              </div>
-            ) : null}
-            <div className="agent-messages" ref={cursorPanelScrollRef}>
-              {cursorWorkbenchDbMessages.length > 0 ? (
-                <div className="cursor-workbench-db-history" aria-label="已落库的对话历史">
-                  {cursorWorkbenchDbMessages.map((m, i) => (
-                    <div
-                      key={m.id ? String(m.id) : `db-${i}-${m.role}`}
-                      className={`agent-bubble ${m.role === 'user' ? 'agent-bubble--user' : 'agent-bubble--assistant'}`}
-                    >
-                      <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
-                      {m.role === 'assistant' ? (
-                        <div className="agent-bubble-text agent-bubble-text--cursor-cli-nested">
-                          <CursorWorkbenchDbAssistantBody
-                            content={m.content}
-                            deliveryType={
-                              activeMode?.cliVariant === 'qoder' ? 'qoder_cli' : 'cursor_cli'
-                            }
-                          />
-                        </div>
+                </div>
+              ) : null}
+            </div>
+            {cursorUseSessionRail ? (
+              <div className="cursor-workbench-3col-shell">
+                <div className="cursor-workbench-3col-body">
+                  <nav
+                    className="cursor-workbench-col cursor-workbench-col--sessions"
+                    aria-label="会话列表"
+                  >
+                    <div className="cursor-workbench-session-rail-inner" role="tablist">
+                      {workbenchSplitTabIds.length === 0 ? (
+                        <p className="cursor-workbench-strip-meta">暂无会话</p>
                       ) : (
-                        <div
-                          className="agent-bubble-text"
-                          style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                        >
-                          {m.content}
-                        </div>
+                        workbenchSplitTabIds.map((tid) => {
+                          const active = String(asrSessionId || '') === String(tid);
+                          const runningHere =
+                            cursorStreamLoading &&
+                            cursorRunActiveSessionId != null &&
+                            String(cursorRunActiveSessionId) === String(tid);
+                          return (
+                            <div
+                              key={tid}
+                              className={`cursor-workbench-rail-row ${active ? 'cursor-workbench-rail-row--active' : ''}`}
+                              role="none"
+                            >
+                              <button
+                                type="button"
+                                role="tab"
+                                aria-selected={active}
+                                className="cursor-workbench-rail-main"
+                                title={formatWorkbenchSessionLabel(
+                                  workspacePickSessions.find((s) => String(s.id) === String(tid)) || {
+                                    id: tid,
+                                  }
+                                )}
+                                onClick={() => assignAsrSession(tid)}
+                              >
+                                {runningHere ? (
+                                  <span className="cursor-workbench-rail-pulse" aria-hidden />
+                                ) : null}
+                                <span className="cursor-workbench-rail-label">{getCursorTabTitle(tid)}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="cursor-workbench-rail-close"
+                                aria-label={`关闭 ${getCursorTabTitle(tid)}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void closeCursorWorkbenchTab(tid);
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })
                       )}
                     </div>
-                  ))}
-                </div>
-              ) : null}
-              {cursorPendingUserPrompt ||
-              cursorSidePanelLoading ||
-              String(cursorTailInfo).trim() ||
-              String(sanitizedCursorStderr).trim() ? (
-                <>
-                  {cursorPendingUserPrompt ? (
-                    <div className="agent-bubble agent-bubble--user">
-                      <div className="agent-bubble-role">你</div>
-                      <div className="agent-bubble-text">{cursorPendingUserPrompt}</div>
-                    </div>
-                  ) : null}
-                  {cursorSidePanelLoading ? (
+                  </nav>
+                  <div className="cursor-workbench-col cursor-workbench-col--conversation">
+                    {asrSessionId &&
+                    SESSION_UUID_RE.test(String(asrSessionId)) &&
+                    !cursorQuietPrepare &&
+                    (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
+                      <div className="cursor-external-thread-panel">
+                        {cursorEnsureStatus === 'loading' ? (
+                          <p className="cursor-external-thread-status">正在准备…</p>
+                        ) : (
+                          <div className="cursor-external-thread-error-block">
+                            <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
+                            <button
+                              type="button"
+                              className="btn-editor-secondary"
+                              onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
+                            >
+                              重试
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                     <div
-                      className={`cursor-stream-loading${cursorAwaitingCliPaste ? ' cursor-stream-loading--prepare' : ''}`}
-                      role="status"
-                      aria-live="polite"
+                      className="agent-messages agent-messages--cursor-workbench-split"
+                      aria-label="对话"
                     >
-                      <span className="cursor-stream-loading-pulse" aria-hidden />
-                      {cursorAwaitingCliPaste
-                        ? CURSOR_CLI_PANEL_STATUS_PREPARING
-                        : cursorRunActiveSessionId &&
-                            String(cursorRunActiveSessionId) === String(asrSessionId)
-                          ? CURSOR_CLI_PANEL_STATUS_RUNNING
-                          : CURSOR_CLI_PANEL_STATUS_WAIT_OUTPUT}
+                      {cursorWorkbenchDbMessages.length > 0 ? (
+                        <div className="cursor-workbench-db-history" aria-label="已落库的对话历史">
+                          {cursorWorkbenchDbMessages.map((m, i) => (
+                            <div
+                              key={m.id ? String(m.id) : `db-${i}-${m.role}`}
+                              className={`agent-bubble ${m.role === 'user' ? 'agent-bubble--user' : 'agent-bubble--assistant'}`}
+                            >
+                              <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
+                              {m.role === 'assistant' ? (
+                                <div className="agent-bubble-text agent-bubble-text--cursor-cli-nested">
+                                  <CursorWorkbenchDbAssistantBody
+                                    content={m.content}
+                                    deliveryType={
+                                      activeMode?.cliVariant === 'qoder' ? 'qoder_cli' : 'cursor_cli'
+                                    }
+                                  />
+                                </div>
+                              ) : (
+                                <div
+                                  className="agent-bubble-text"
+                                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                                >
+                                  {m.content}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {cursorPendingUserPrompt ? (
+                        <div className="agent-bubble agent-bubble--user">
+                          <div className="agent-bubble-role">你</div>
+                          <div className="agent-bubble-text">{cursorPendingUserPrompt}</div>
+                        </div>
+                      ) : null}
+                      {cursorSidePanelLoading ? (
+                        <div className="agent-bubble agent-bubble--assistant">
+                          <div className="agent-bubble-role">助手</div>
+                          <div className="agent-bubble-text">
+                            <div
+                              className="agent-stream-skeleton"
+                              aria-busy="true"
+                              aria-label={CURSOR_CLI_PANEL_STATUS_PREPARING}
+                            >
+                              <div className="agent-stream-skeleton-head">
+                                <span className="agent-stream-skeleton-spinner" aria-hidden />
+                                <span className="agent-stream-skeleton-label">正在准备…</span>
+                              </div>
+                              <span className="agent-stream-skeleton-line" />
+                              <span className="agent-stream-skeleton-line agent-stream-skeleton-line--short" />
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                      {cursorWorkbenchDbMessages.length === 0 &&
+                      !cursorPendingUserPrompt &&
+                      !cursorSidePanelLoading ? (
+                        <p className="agent-empty">尚无已落库对话；发送后记录将显示在此栏。</p>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="cursor-workbench-col cursor-workbench-col--output">
+                    <div
+                      className="agent-messages agent-messages--cursor-workbench-split"
+                      ref={cursorPanelScrollRef}
+                      aria-label="CLI 输出"
+                    >
+                      {String(cursorTailInfo).trim() || String(sanitizedCursorStderr).trim() ? (
+                        <CursorCliStructuredView
+                          parsed={cursorParsedOutput}
+                          stderr={sanitizedCursorStderr}
+                          formatHint={cursorStreamFormatHint}
+                        />
+                      ) : null}
+                      {!cursorSidePanelLoading &&
+                      !String(cursorTailInfo).trim() &&
+                      !String(sanitizedCursorStderr).trim() ? (
+                        <p className="agent-empty">当前会话的 CLI 流式输出将显示在此栏。</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {asrSessionId &&
+                SESSION_UUID_RE.test(String(asrSessionId)) &&
+                !cursorQuietPrepare &&
+                (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
+                  <div className="cursor-external-thread-panel">
+                    {cursorEnsureStatus === 'loading' ? (
+                      <p className="cursor-external-thread-status">正在准备…</p>
+                    ) : (
+                      <div className="cursor-external-thread-error-block">
+                        <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
+                        <button
+                          type="button"
+                          className="btn-editor-secondary"
+                          onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
+                        >
+                          重试
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+                <div className="agent-messages" ref={cursorPanelScrollRef}>
+                  {cursorWorkbenchDbMessages.length > 0 ? (
+                    <div className="cursor-workbench-db-history" aria-label="已落库的对话历史">
+                      {cursorWorkbenchDbMessages.map((m, i) => (
+                        <div
+                          key={m.id ? String(m.id) : `db-${i}-${m.role}`}
+                          className={`agent-bubble ${m.role === 'user' ? 'agent-bubble--user' : 'agent-bubble--assistant'}`}
+                        >
+                          <div className="agent-bubble-role">{m.role === 'user' ? '你' : '助手'}</div>
+                          {m.role === 'assistant' ? (
+                            <div className="agent-bubble-text agent-bubble-text--cursor-cli-nested">
+                              <CursorWorkbenchDbAssistantBody
+                                content={m.content}
+                                deliveryType={
+                                  activeMode?.cliVariant === 'qoder' ? 'qoder_cli' : 'cursor_cli'
+                                }
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              className="agent-bubble-text"
+                              style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                            >
+                              {m.content}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   ) : null}
-                  {String(cursorTailInfo).trim() || String(sanitizedCursorStderr).trim() ? (
-                    <CursorCliStructuredView
-                      parsed={cursorParsedOutput}
-                      stderr={sanitizedCursorStderr}
-                      formatHint={cursorStreamFormatHint}
-                    />
+                  {cursorPendingUserPrompt ||
+                  cursorSidePanelLoading ||
+                  String(cursorTailInfo).trim() ||
+                  String(sanitizedCursorStderr).trim() ? (
+                    <>
+                      {cursorPendingUserPrompt ? (
+                        <div className="agent-bubble agent-bubble--user">
+                          <div className="agent-bubble-role">你</div>
+                          <div className="agent-bubble-text">{cursorPendingUserPrompt}</div>
+                        </div>
+                      ) : null}
+                      {cursorSidePanelLoading ? (
+                        <div
+                          className="cursor-stream-loading cursor-stream-loading--prepare"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <span className="cursor-stream-loading-pulse" aria-hidden />
+                          {CURSOR_CLI_PANEL_STATUS_PREPARING}
+                        </div>
+                      ) : null}
+                      {String(cursorTailInfo).trim() || String(sanitizedCursorStderr).trim() ? (
+                        <CursorCliStructuredView
+                          parsed={cursorParsedOutput}
+                          stderr={sanitizedCursorStderr}
+                          formatHint={cursorStreamFormatHint}
+                        />
+                      ) : null}
+                    </>
                   ) : null}
-                </>
-              ) : null}
-              {cursorWorkbenchDbMessages.length === 0 &&
-              !cursorPendingUserPrompt &&
-              !cursorSidePanelLoading &&
-              !String(cursorTailInfo).trim() &&
-              !String(sanitizedCursorStderr).trim() ? (
-                <p className="agent-empty">发送第一条消息后，回复会显示在这里。</p>
-              ) : null}
-            </div>
+                  {cursorWorkbenchDbMessages.length === 0 &&
+                  !cursorPendingUserPrompt &&
+                  !cursorSidePanelLoading &&
+                  !String(cursorTailInfo).trim() &&
+                  !String(sanitizedCursorStderr).trim() ? (
+                    <p className="agent-empty">发送第一条消息后，回复会显示在这里。</p>
+                  ) : null}
+                </div>
+              </>
+            )}
           </aside>
         ) : null}
       </div>

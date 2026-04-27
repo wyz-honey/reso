@@ -36,24 +36,24 @@ const BUILTIN_OVERRIDE_KEY = 'reso_builtin_output_overrides_v1';
 const LEGACY_MODES_KEY = 'reso_work_modes_custom_v1';
 
 export const NEW_OUTPUT_DELIVERY_TYPES = [
-  { value: 'http', label: 'HTTP' },
-  { value: 'xiaoai', label: 'CLI' },
+  { value: 'http', label: '网络' },
+  { value: 'xiaoai', label: '终端' },
 ] as const;
 
 export const HTTP_PROTOCOL_LABELS = {
-  openai_chat: 'OpenAI Chat',
-  agui: 'AGUI',
+  openai_chat: '常见聊天接口',
+  agui: '流式多事件',
 } as const;
 
 export const DELIVERY_TYPE_LABELS = {
   paragraph_clipboard: '标准模式',
   agent_chat: 'RESO',
-  http: 'HTTP',
-  xiaoai: 'CLI',
+  http: '网络',
+  xiaoai: '终端',
   cursor_cli: 'Cursor',
   qoder_cli: 'Qoder',
   stream: '流式（旧）',
-  command: 'CLI（旧）',
+  command: '终端（旧）',
 } as const;
 
 export const TARGET_KINDS = {

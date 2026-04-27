@@ -185,15 +185,13 @@ export default function ResoAgentPage() {
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
             <NavLink to="/outputs" className="reso-agent-back">
-              ← 目标管理
+              ← 目标列表
             </NavLink>
-            <h1 className="sessions-title">RESO 智能体</h1>
-            <p className="sessions-subtitle">
-              内置对话智能体：配置名称与说明、系统提示词、供应商与对话模型。流式对话走 pi-agent-core（百炼 OpenAI 兼容）+ AG-UI 事件；支持线程记忆与技能工具。
-            </p>
+            <h1 className="sessions-title">RESO 助手</h1>
+            <p className="sessions-subtitle">内置对话：改名字、说明、系统提示词，以及用哪家模型来聊。</p>
             {row ? (
               <p className="reso-agent-meta">
-                <span className="outputs-type-pill outputs-type-pill--kind">Agent</span>
+                <span className="outputs-type-pill outputs-type-pill--kind">助手</span>
                 <code className="reso-agent-id" title={String(row.id)}>
                   {String(row.id)}
                 </code>
@@ -231,7 +229,7 @@ export default function ResoAgentPage() {
               />
             </label>
             <label className="settings-label">
-              请求说明（入参）
+              接口说明（给对方看的）
               <input
                 className="settings-input"
                 value={requestUrl}
@@ -239,7 +237,7 @@ export default function ResoAgentPage() {
               />
             </label>
             <label className="settings-label">
-              输出结构（OpenAI 兼容流式等）
+              返回说明（给对方看的）
               <textarea
                 className="settings-textarea"
                 rows={4}
@@ -251,9 +249,7 @@ export default function ResoAgentPage() {
 
           <section className="settings-category">
             <h2 className="settings-section-title">模型</h2>
-            <p className="settings-category-lead">
-              使用本机「模型供应商」存储的目录与 Key（未在主导航展示，数据仍生效）。
-            </p>
+            <p className="settings-category-lead">用「模型与密钥」页里配好的连接和模型。</p>
             <label className="settings-label">
               供应商
               <select
@@ -300,28 +296,26 @@ export default function ResoAgentPage() {
                 rows={10}
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
-                placeholder="定义助手角色与回答风格；保存后工作台 RESO 模式立即生效。"
+                placeholder="写清助手是谁、怎么回答；保存后工作台里立刻生效。"
               />
             </label>
           </section>
 
           <fieldset className="outputs-tools-fieldset reso-agent-tools" disabled>
-            <legend>工具与技能</legend>
-            <p className="sessions-muted">即将到来：挂载工具、Agent Skills 等；当前不可用。</p>
+            <legend>外挂能力</legend>
+            <p className="sessions-muted">以后再加；现在先空着。</p>
           </fieldset>
 
           <section className="settings-category">
             <h2 className="settings-section-title">环境变量（可选）</h2>
-            <p className="settings-category-lead">
-              保存在本目标上，供后续 HTTP/CLI 扩展或与网关约定使用；当前对话 API 未自动注入，可不填。
-            </p>
+            <p className="settings-category-lead">给以后扩展用；日常对话可以不填。</p>
             <CliEnvEditor value={targetEnv} onChange={setTargetEnv} lead={null} />
           </section>
 
           <OutputVoiceControlSection
             value={voiceControl}
             onChange={setVoiceControl}
-            lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
+            lead="说话识别到本助手时：自动发或只等你点发送。"
           />
 
           <div className="settings-actions">

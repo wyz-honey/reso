@@ -31,6 +31,28 @@ function getUiControlSecret(): string {
   return String(process.env.RESO_UI_CONTROL_SECRET ?? '').trim();
 }
 
+/**
+ * Paraformer `result-generated` 是否句末。须避免 `Boolean("false")===true` 把中间结果整段当定稿。
+ * 若未带 `sentence_end`，则以 `end_time` 非空作为已定稿的辅助判断（与百炼文档一致）。
+ */
+function dashScopeSentenceIsFinal(sentence: {
+  sentence_end?: unknown;
+  end_time?: unknown;
+} | null | undefined): boolean {
+  if (!sentence || typeof sentence !== 'object') return false;
+  const se = sentence.sentence_end;
+  if (se === true || se === 1) return true;
+  if (se === false || se === 0) return false;
+  if (typeof se === 'string') {
+    const t = se.trim().toLowerCase();
+    if (t === 'true' || t === '1') return true;
+    if (t === 'false' || t === '0' || t === '') return false;
+  }
+  const et = sentence.end_time;
+  if (et != null && et !== '') return true;
+  return false;
+}
+
 export function attachWebSockets(httpServer: Server): {
   shutdownSockets: () => Promise<void>;
   broadcastUiControlCommands: (commands: unknown[]) => number;
@@ -241,7 +263,7 @@ export function attachWebSockets(httpServer: Server): {
                   safeSend({
                     type: 'transcript',
                     text,
-                    sentenceEnd: Boolean(sentence?.sentence_end),
+                    sentenceEnd: dashScopeSentenceIsFinal(sentence),
                   });
                 }
               } else if (event === 'task-started') {

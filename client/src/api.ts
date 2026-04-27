@@ -489,7 +489,7 @@ export async function apiDeleteChatThread(threadId: string) {
 export async function fetchQuickInputs() {
   const r = await fetch('/api/quick-inputs');
   const data = await parseJson(r);
-  if (!r.ok) throw new Error(String(data.error || `加载快捷上下文失败 (${r.status})`));
+  if (!r.ok) throw new Error(String(data.error || `加载备忘失败 (${r.status})`));
   return (data.items as unknown[]) || [];
 }
 
@@ -532,9 +532,11 @@ export type TaskRecord = {
   tags: string[];
   expected_at: string | null;
   scheduled_at: string | null;
+  schedule_cron?: string | null;
   target_output_id: string | null;
   source_paragraph_id: string | null;
   batch_key: string | null;
+  organization_id: string | null;
   created_at: string;
   updated_at: string;
   nav_path: string;
@@ -550,8 +552,14 @@ export async function fetchTasks(params?: { status?: string; tag?: string }): Pr
   const r = await fetch(`/api/tasks?${q}`);
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `加载任务失败 (${r.status})`));
+  const rawItems = (data.items as TaskRecord[]) || [];
+  const items = rawItems.map((x) => ({
+    ...x,
+    schedule_cron: x.schedule_cron ?? null,
+    organization_id: x.organization_id ?? null,
+  }));
   return {
-    items: (data.items as TaskRecord[]) || [],
+    items,
     statuses: Array.isArray(data.statuses) ? (data.statuses as string[]) : [],
   };
 }
@@ -560,7 +568,12 @@ export async function fetchTask(id: string): Promise<TaskRecord> {
   const r = await fetch(`/api/tasks/${encodeURIComponent(id)}`);
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `加载任务失败 (${r.status})`));
-  return data as TaskRecord;
+  const row = data as TaskRecord;
+  return {
+    ...row,
+    schedule_cron: row.schedule_cron ?? null,
+    organization_id: row.organization_id ?? null,
+  };
 }
 
 export async function apiCreateTask(body: Record<string, unknown>): Promise<TaskRecord> {
@@ -571,7 +584,12 @@ export async function apiCreateTask(body: Record<string, unknown>): Promise<Task
   });
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `创建任务失败 (${r.status})`));
-  return data as TaskRecord;
+  const row = data as TaskRecord;
+  return {
+    ...row,
+    schedule_cron: row.schedule_cron ?? null,
+    organization_id: row.organization_id ?? null,
+  };
 }
 
 export async function apiUpdateTask(id: string, patch: Record<string, unknown>): Promise<TaskRecord> {
@@ -582,7 +600,12 @@ export async function apiUpdateTask(id: string, patch: Record<string, unknown>):
   });
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `更新任务失败 (${r.status})`));
-  return data as TaskRecord;
+  const row = data as TaskRecord;
+  return {
+    ...row,
+    schedule_cron: row.schedule_cron ?? null,
+    organization_id: row.organization_id ?? null,
+  };
 }
 
 export async function apiDeleteTask(id: string): Promise<void> {
@@ -590,6 +613,67 @@ export async function apiDeleteTask(id: string): Promise<void> {
   const data = await parseJson(r);
   if (!r.ok) throw new Error(String(data.error || `删除任务失败 (${r.status})`));
   void data;
+}
+
+export type OrganizationSummary = {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function fetchOrganizations(): Promise<OrganizationSummary[]> {
+  const r = await fetch('/api/organizations');
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载组织失败 (${r.status})`));
+  const raw = (data.items as OrganizationSummary[]) || [];
+  return raw.map((x) => ({
+    ...x,
+    description: x.description ?? '',
+  }));
+}
+
+export type CreateOrganizationBody = {
+  name: string;
+  description?: string;
+};
+
+export async function apiCreateOrganization(body: CreateOrganizationBody): Promise<OrganizationSummary> {
+  const r = await fetch('/api/organizations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `创建组织失败 (${r.status})`));
+  const x = data as OrganizationSummary;
+  return {
+    ...x,
+    description: x.description ?? '',
+  };
+}
+
+export async function apiPatchOrganization(orgId: string, patch: Record<string, unknown>): Promise<OrganizationSummary> {
+  const r = await fetch(`/api/organizations/${encodeURIComponent(orgId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `更新组织失败 (${r.status})`));
+  const x = data as OrganizationSummary;
+  return {
+    ...x,
+    description: x.description ?? '',
+  };
+}
+
+export async function fetchOrganizationDetail(orgId: string): Promise<Record<string, unknown>> {
+  const r = await fetch(`/api/organizations/${encodeURIComponent(orgId)}`);
+  const data = await parseJson(r);
+  if (!r.ok) throw new Error(String(data.error || `加载组织详情失败 (${r.status})`));
+  return data as Record<string, unknown>;
 }
 
 /** GET /api/client-settings；未配置数据库或请求失败时返回 null */

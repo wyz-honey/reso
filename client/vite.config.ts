@@ -45,11 +45,12 @@ export default defineConfig(({ mode, command }) => {
   const devCursorWs = isDevServe ? `ws://127.0.0.1:${backendPort}/ws/cursor-tail` : '';
   const devUiControlWs = isDevServe ? `ws://127.0.0.1:${backendPort}/ws/ui-control` : '';
 
+  const srcDir = path.resolve(__dirname, 'src');
+
   return {
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-      },
+      // `@{ path: './src' }` 在部分 Vite 版本下对 `@/foo` 解析不稳定，用前缀替换更可靠
+      alias: [{ find: /^@\//, replacement: `${srcDir}${path.sep}` }],
     },
     define: {
       __RESO_DEV_ASR_WS_URL__: JSON.stringify(devAsrWs),

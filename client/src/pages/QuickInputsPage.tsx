@@ -198,7 +198,7 @@ export default function QuickInputsPage() {
   };
 
   const onDelete = async (id) => {
-    if (!window.confirm('删除该快捷上下文？工作台标签将同步更新。')) return;
+    if (!window.confirm('删除这条备忘？工作台上的标签也会更新。')) return;
     setMsg('');
     setBusy(true);
     try {
@@ -219,13 +219,11 @@ export default function QuickInputsPage() {
       <div className="sessions-view-stack">
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
-            <h1 className="sessions-title">快捷上下文</h1>
-            <p className="sessions-subtitle">
-              预设片段用于工作台：在正文编辑区上方以标签展示，点击即可插入光标处（未聚焦编辑区时追加到末尾）。数据存 PostgreSQL。
-            </p>
+            <h1 className="sessions-title">备忘片段</h1>
+            <p className="sessions-subtitle">常用句子，工作台里一点就插入。</p>
           </div>
           <button type="button" className="btn-primary-nav" disabled={busy} onClick={openNewModal}>
-            新建快捷上下文
+            新建
           </button>
         </div>
 
@@ -248,7 +246,7 @@ export default function QuickInputsPage() {
               className="btn-sessions-refresh"
               disabled={loading || busy}
               onClick={() => load()}
-              aria-label="刷新快捷上下文列表"
+              aria-label="刷新列表"
             >
               刷新
             </button>
@@ -260,12 +258,12 @@ export default function QuickInputsPage() {
 
         <div className="sessions-list-only sessions-list-only--flex">
           <div className="sessions-list-panel sessions-list-panel--full sessions-list-panel--stretch">
-            <div className="sessions-list-head">快捷上下文列表</div>
+            <div className="sessions-list-head">列表</div>
             {loading ? (
               <p className="sessions-muted sessions-list-body-pad">加载中…</p>
             ) : items.length === 0 ? (
               <p className="sessions-muted sessions-list-body-pad">
-                暂无条目，点击右上角「新建快捷上下文」。
+                暂无条目，点右上角「新建」。
               </p>
             ) : filteredItems.length === 0 ? (
               <p className="sessions-muted sessions-list-body-pad">
@@ -314,14 +312,14 @@ export default function QuickInputsPage() {
           if (!next) cancelModal();
         }}
         titleId="quick-input-modal-title"
-        title={editingId ? '编辑快捷上下文' : '新建快捷上下文'}
-        description="工作台正文上方以标签展示；点击标签插入到光标处（未聚焦编辑区时追加到末尾）。"
+        title={editingId ? '编辑备忘' : '新建备忘'}
+        description="工作台上方显示成小标签；点一下插到光标处，没光标就加在末尾。"
         contentClassName="modal-card--wide sm:max-w-[min(96vw,720px)]"
       >
         <div ref={modalCardRef}>
           <form className="modal-form" onSubmit={editingId ? onUpdate : onCreate}>
               <label className="modal-label">
-                标签（工作台显示为 tag）
+                标签（显示名）
                 <input
                   className="modal-input"
                   value={form.label}

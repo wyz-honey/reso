@@ -49,7 +49,7 @@ export default function ModelProvidersPage() {
       compatBaseUrl: String(fd.get('compatBaseUrl') ?? ''),
       apiKey: String(fd.get('apiKey') ?? ''),
     });
-    setMsg('已保存供应商');
+    setMsg('已保存');
     refresh();
     setTimeout(() => setMsg(''), 2400);
   };
@@ -67,7 +67,7 @@ export default function ModelProvidersPage() {
     const cat = newModel.category;
     const aid = newModel.apiModelId.trim();
     if (!aid) {
-      setMsg('请填写 API 模型 ID');
+      setMsg('请填写上游模型名');
       return;
     }
     addModel({
@@ -90,17 +90,13 @@ export default function ModelProvidersPage() {
       <div className="sessions-view-stack">
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
-            <h1 className="sessions-title">模型供应商</h1>
+            <h1 className="sessions-title">模型与密钥</h1>
             <p className="sessions-subtitle">
-              集中管理<strong> API Key</strong>、<strong>兼容接口地址</strong>与<strong>按场景分类的模型</strong>
-              （语音识别 / 对话 LLM）。标准模式识别与 RESO 对话会优先使用此处默认；也可在
-              <NavLink
-                to={`/outputs/${BUILTIN_OUTPUT_ID.AGENT}`}
-                className="sessions-inline-link"
-              >
-                RESO 目标详情
+              放接口地址、密钥和要用的模型。识别和对话默认从这里取；也可在
+              <NavLink to={`/outputs/${BUILTIN_OUTPUT_ID.AGENT}`} className="sessions-inline-link">
+                RESO 助手
               </NavLink>
-              中覆盖对话供应商与模型。
+              里单独改对话用的模型。
             </p>
           </div>
         </div>
@@ -109,21 +105,19 @@ export default function ModelProvidersPage() {
 
         <div className="model-prov-grid">
           <section className="settings-card model-prov-card">
-            <h2 className="settings-section-title">数据结构说明</h2>
+            <h2 className="settings-section-title">说明</h2>
             <ul className="model-prov-schema-list">
               <li>
-                <strong>供应商 Provider</strong>：连接方式（当前仅百炼 Compatible）、显示名、可选本机 API Key（留空则用服务端
-                .env 或「设置」里的 Key）。
+                <strong>连接</strong>：起一个名字、填对方给的接口地址；密钥可只填在本机，不填则用设置或服务端里已有的。
               </li>
               <li>
-                <strong>模型 Model</strong>：挂在某一供应商下，带 <code className="settings-code">category</code>{' '}
-               （speech / chat）与实际上游 <code className="settings-code">apiModelId</code>。
+                <strong>模型</strong>：分「说话识别」和「文字对话」两类，每类里选默认要用的那条。
               </li>
               <li>
-                <strong>defaults</strong>：全平台默认的「识别用模型」「对话用模型」。
+                <strong>默认</strong>：全站识别、对话没单独指定时，用这里勾的默认模型。
               </li>
               <li>
-                <strong>resoAgent</strong>：仅影响内置 RESO 目标的对话侧绑定，便于与 HTTP 自定义目标区分。
+                <strong>RESO 助手</strong>：内置助手可以再用自己的一套对话模型，和别的目标分开。
               </li>
             </ul>
           </section>
@@ -131,7 +125,7 @@ export default function ModelProvidersPage() {
           {primaryProvider ? (
             <section className="settings-card model-prov-card">
               <h2 className="settings-section-title">
-                供应商 · {PROVIDER_KIND_LABELS[primaryProvider.kind] || primaryProvider.kind}
+                当前连接 · {PROVIDER_KIND_LABELS[primaryProvider.kind] || primaryProvider.kind}
               </h2>
               <form className="model-prov-form" onSubmit={onSaveProvider}>
                 <label className="settings-label">
@@ -144,28 +138,28 @@ export default function ModelProvidersPage() {
                   />
                 </label>
                 <label className="settings-label">
-                  Compatible Base URL
+                  接口地址
                   <input
                     className="settings-input"
                     name="compatBaseUrl"
                     defaultValue={primaryProvider.compatBaseUrl || ''}
-                    placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    placeholder="https://…"
                   />
                 </label>
                 <label className="settings-label">
-                  API Key（可选，仅存本机）
+                  密钥（可选，仅存本机）
                   <input
                     className="settings-input"
                     name="apiKey"
                     type="password"
                     autoComplete="off"
                     defaultValue={primaryProvider.apiKey || ''}
-                    placeholder="留空则使用设置页或服务端环境变量"
+                    placeholder="不填则用设置或服务端已有密钥"
                   />
                 </label>
                 <div className="model-prov-actions">
                   <button type="submit" className="btn-copy">
-                    保存供应商
+                    保存
                   </button>
                   <button type="button" className="btn-clear" onClick={onResetCatalog}>
                     恢复默认目录
@@ -176,10 +170,8 @@ export default function ModelProvidersPage() {
           ) : null}
 
           <section className="settings-card model-prov-card">
-            <h2 className="settings-section-title">默认绑定</h2>
-            <p className="settings-category-lead">
-              标准模式实时识别、以及未在 RESO 目标中单独指定时使用下列默认。
-            </p>
+            <h2 className="settings-section-title">默认模型</h2>
+            <p className="settings-category-lead">识别和对话没别处指定时，用下面两个。</p>
             <div className="model-prov-defaults">
               <label className="settings-label">
                 {MODEL_CATEGORY_LABELS.speech}
@@ -236,7 +228,7 @@ export default function ModelProvidersPage() {
               </select>
               <input
                 className="settings-input"
-                placeholder="API 模型 ID，如 qwen-plus"
+                placeholder="上游模型名，如 qwen-plus"
                 value={newModel.apiModelId}
                 onChange={(e) => setNewModel((s) => ({ ...s, apiModelId: e.target.value }))}
               />
@@ -258,7 +250,7 @@ export default function ModelProvidersPage() {
                   <thead>
                     <tr>
                       <th>显示名</th>
-                      <th>apiModelId</th>
+                      <th>上游名</th>
                       <th />
                     </tr>
                   </thead>
@@ -292,7 +284,7 @@ export default function ModelProvidersPage() {
                   <thead>
                     <tr>
                       <th>显示名</th>
-                      <th>apiModelId</th>
+                      <th>上游名</th>
                       <th />
                     </tr>
                   </thead>

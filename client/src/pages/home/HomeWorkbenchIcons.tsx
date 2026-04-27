@@ -14,6 +14,47 @@ export function IconPause() {
   );
 }
 
+export function IconMic() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Z" />
+      <path d="M19 11a7 7 0 0 1-14 0M12 18.5V21" />
+      <path d="M9 21h6" />
+    </svg>
+  );
+}
+
+export function IconMicMuted() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Z" />
+      <path d="M19 11a7 7 0 0 1-1 3.6M6 11a7 7 0 0 1 7-7c.6 0 1.2.08 1.76.24" />
+      <path d="M12 18.5V21M9 21h6" />
+      <path d="M4 4l16 16" />
+    </svg>
+  );
+}
+
 export function IconCliParams() {
   return (
     <svg

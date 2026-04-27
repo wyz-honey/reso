@@ -84,7 +84,7 @@ function CursorOutputDetail({ row, onSaved }) {
     st.setErr('');
     const tmpl = st.commandTemplate.trim();
     if (!tmpl) {
-      st.setErr('请填写执行指令');
+      st.setErr('请先写好上面的命令');
       return;
     }
     const mergedSlots = mergeAngleSlotsWithDefaults(tmpl, st.angleSlots);
@@ -132,26 +132,12 @@ function CursorOutputDetail({ row, onSaved }) {
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
             <NavLink to="/outputs" className="reso-agent-back">
-              ← 目标管理
+              ← 目标列表
             </NavLink>
             <h1 className="sessions-title">
               {row.deliveryType === 'qoder_cli' ? 'Qoder' : 'Cursor'} 目标
             </h1>
-            <p className="sessions-subtitle">
-              {row.deliveryType === 'qoder_cli' ? (
-                <>
-                  在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
-                  输出重定向到服务端 <code className="settings-code">outputs/qoder/&lt;会话&gt;/</code>；正文即每次的{' '}
-                  <code className="settings-code">-p</code> 提示词。
-                </>
-              ) : (
-                <>
-                  在下面编辑<strong>一条</strong>要执行的 CLI；尖括号里的名字会在「动态参数」里逐项配置（系统从工作台上下文取，或自定义写死）。
-                  绑定数据库会话后自动关联 Cursor 线程；复制/发送时若无 <code className="settings-code">--resume</code> 会自动插入。正文即每次的{' '}
-                  <code className="settings-code">-p</code>。
-                </>
-              )}
-            </p>
+            <p className="sessions-subtitle">写一条要在终端跑的命令；尖括号里的词在下面逐项填。</p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id" title={row.id}>
                 {row.id}
@@ -186,10 +172,7 @@ function CursorOutputDetail({ row, onSaved }) {
 
           <section className="settings-category">
             <h2 className="settings-section-title">执行指令</h2>
-            <p className="settings-category-lead">
-              与终端里要跑的命令一致；用 <code className="settings-code">&lt;标签&gt;</code>{' '}
-              标记可变部分，下面「动态参数」会按每个标签单独配置。
-            </p>
+            <p className="settings-category-lead">和终端里敲的一样；尖括号表示可变的词，下面逐项填。</p>
             <div className="outputs-expand-label outputs-expand-label--cli-template">
               <CliInstructionHeader
                 title="执行指令"
@@ -214,23 +197,21 @@ function CursorOutputDetail({ row, onSaved }) {
               slots={mergeAngleSlotsWithDefaults(commandTemplate, angleSlots)}
               onChange={setAngleSlots}
               sectionTitle="动态参数"
-              sectionHint="与指令里的尖括号一一对应。编程目录选「系统 · 工作区路径」时，默认值仍保存在本目标（上次保存的 extensions）；若选「自定义」则路径以这里填写的为准。"
+              sectionHint="和上面命令里的尖括号一一对应；工作目录选「系统」用上次保存的，选「自定义」用这里填的。"
               useCursorAgentModelPicker
             />
           </section>
 
           <section className="settings-category">
             <h2 className="settings-section-title">环境变量（可选）</h2>
-            <p className="settings-category-lead">
-              服务端执行 <code className="settings-code">agent create-chat</code> 等时，可按此处补全进程环境（与顶部工作台一致）。
-            </p>
+            <p className="settings-category-lead">跑命令时顺带带上的变量；一般不用改。</p>
             <CliEnvEditor value={targetEnv} onChange={setTargetEnv} lead={null} />
           </section>
 
           <OutputVoiceControlSection
             value={voiceControl}
             onChange={setVoiceControl}
-            lead="工作台在 Cursor 目标下识别时，按此处规则自动提交或仅手动发送。"
+            lead="说话识别到本目标时：自动发或只等你点发送。"
           />
 
           <div className="settings-actions">
@@ -276,12 +257,10 @@ function AsrBuiltinDetail({ row, onSaved }) {
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
             <NavLink to="/outputs" className="reso-agent-back">
-              ← 目标管理
+              ← 目标列表
             </NavLink>
             <h1 className="sessions-title">{row.name}</h1>
-            <p className="sessions-subtitle">
-              内置标准模式：可配置识别结束策略；行为说明见下方只读摘要。
-            </p>
+            <p className="sessions-subtitle">内置语音识别；细节在下方说明里。</p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id">{row.id}</code>
             </p>
@@ -293,16 +272,16 @@ function AsrBuiltinDetail({ row, onSaved }) {
             <h2 className="settings-section-title">说明（只读）</h2>
             <p className="sessions-muted">{row.description}</p>
             <p className="sessions-muted">
-              <strong>请求说明</strong> {row.requestUrl}
+              <strong>接口</strong> {row.requestUrl}
             </p>
             <p className="sessions-muted">
-              <strong>输出结构</strong> {row.outputShape}
+              <strong>返回</strong> {row.outputShape}
             </p>
           </section>
           <OutputVoiceControlSection
             value={voiceControl}
             onChange={setVoiceControl}
-            lead="工作台在标准模式下识别时，按此处规则自动保存或仅手动提交。"
+            lead="说话识别到标准模式时：自动保存或只等你点提交。"
           />
           <div className="settings-actions">
             <button type="submit" className="btn-primary-nav">
@@ -339,7 +318,7 @@ export default function OutputDetailPage() {
       <div className="sessions-page reso-agent-page">
         <div className="sessions-view-stack">
           <NavLink to="/outputs" className="reso-agent-back">
-            ← 目标管理
+            ← 目标列表
           </NavLink>
           <p className="sessions-error sessions-alert">未找到该目标。</p>
         </div>
@@ -361,12 +340,10 @@ export default function OutputDetailPage() {
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
             <NavLink to="/outputs" className="reso-agent-back">
-              ← 目标管理
+              ← 目标列表
             </NavLink>
             <h1 className="sessions-title">{row.name}</h1>
-            <p className="sessions-subtitle">
-              此类目标请在「目标管理」列表中点击该行展开，在列表内直接编辑并保存。
-            </p>
+            <p className="sessions-subtitle">这类目标请在列表里展开该行，就地改、就地保存。</p>
             <p className="reso-agent-meta">
               <code className="reso-agent-id">{row.id}</code>
             </p>

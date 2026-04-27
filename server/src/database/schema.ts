@@ -133,6 +133,14 @@ export const resoClientSettings = pgTable('reso_client_settings', {
  * 从段落提炼的可执行任务：名称、概要、给执行器（如 Cursor）的正文、状态与时间维度。
  * batch_key 相同表示同一批，便于客户端批量驱动 CLI；scheduled_at 供后续定时调度使用。
  */
+export const organizations = pgTable('organizations', {
+  id: uuid('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const tasks = pgTable(
   'tasks',
   {
@@ -145,6 +153,8 @@ export const tasks = pgTable(
     tags: jsonb('tags').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     expectedAt: timestamp('expected_at', { withTimezone: true }),
     scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+    /** 可选：Cron 表达式（与 scheduled_at 可配合使用） */
+    scheduleCron: text('schedule_cron'),
     /** 可选：默认工作台目标 output id */
     targetOutputId: text('target_output_id'),
     /** 可选：来源段落 */
@@ -153,6 +163,9 @@ export const tasks = pgTable(
     }),
     /** 相同非空 batch_key 的任务视为一批（批量 Cursor 等场景） */
     batchKey: text('batch_key'),
+    organizationId: uuid('organization_id').references(() => organizations.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -161,5 +174,6 @@ export const tasks = pgTable(
     createdIdx: index('idx_tasks_created_at').on(t.createdAt),
     scheduledIdx: index('idx_tasks_scheduled_at').on(t.scheduledAt),
     batchIdx: index('idx_tasks_batch_key').on(t.batchKey),
+    orgIdx: index('idx_tasks_organization_id').on(t.organizationId),
   })
 );

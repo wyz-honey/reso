@@ -287,10 +287,10 @@ export default function OutputsPage() {
       try {
         extensions = draft.extJson.trim() ? JSON.parse(draft.extJson) : {};
         if (!extensions || typeof extensions !== 'object' || Array.isArray(extensions)) {
-          throw new Error('扩展须为 JSON 对象');
+          throw new Error('扩展须为键值对象');
         }
       } catch (e) {
-        setFormErr(e.message || '扩展 JSON 无效');
+        setFormErr(e.message || '扩展格式不对');
         return;
       }
     }
@@ -381,10 +381,10 @@ export default function OutputsPage() {
       modalDraft.deliveryType === 'http'
         ? modalDraft.outputShape.trim() ||
           (modalDraft.httpProtocol === 'agui'
-            ? 'AGUI：默认 { user_message, session_id }。'
-            : 'OpenAI Chat：{ model?, messages }。')
+            ? '对话接口：默认带用户话与会话。'
+            : '对话接口：常规消息体。')
         : modalDraft.outputShape.trim() ||
-          '尖括号占位可配置系统/自定义；亦支持 {{paragraph}}、{{sessionId}}、{{workspace}}。';
+          '命令里可变部分用尖括号标出；也可用「段落」「会话」等占位。';
     addCustomOutput({
       id,
       builtin: false,
@@ -412,11 +412,8 @@ export default function OutputsPage() {
       <div className="sessions-view-stack">
         <div className="sessions-toolbar">
           <div className="sessions-title-wrap">
-            <h1 className="sessions-title">目标管理</h1>
-            <p className="sessions-subtitle">
-              与工作台「工作模式」目录一致。每条目标含大分类（Agent / API）、创建/更新时间（自定义项）。
-              内置目标点击进<strong>详情页</strong>；自定义目标在列表中展开编辑。
-            </p>
+            <h1 className="sessions-title">目标</h1>
+            <p className="sessions-subtitle">工作台里能用的目标；内置的进详情改，自己的在这里改。</p>
           </div>
           <button
             type="button"
@@ -427,7 +424,7 @@ export default function OutputsPage() {
               setModalOpen(true);
             }}
           >
-            新建输出
+            新建目标
           </button>
         </div>
 
@@ -514,7 +511,7 @@ export default function OutputsPage() {
               <p className="sessions-muted sessions-list-body-pad">
                 {searchQ || filterType !== 'all' || filterKind !== 'all'
                   ? '没有符合条件的输出。'
-                  : '暂无。点击「新建输出」添加。'}
+                  : '暂无。点击「新建目标」添加。'}
               </p>
             ) : (
               <ul className="sessions-list sessions-list--scroll outputs-list">
@@ -602,7 +599,7 @@ export default function OutputsPage() {
                             <div className="sessions-list-row-title">
                               {o.name}
                               <span className="outputs-badge outputs-badge--builtin">内置</span>
-                              <span className="outputs-badge outputs-badge--agent">Agent·CLI</span>
+                              <span className="outputs-badge outputs-badge--agent">助手·终端</span>
                             </div>
                             <div className="sessions-list-row-preview">
                               {(o.description || '').slice(0, 200)}
@@ -629,7 +626,7 @@ export default function OutputsPage() {
                             <div className="sessions-list-row-title">
                               {o.name}
                               <span className="outputs-badge outputs-badge--builtin">内置</span>
-                              <span className="outputs-badge outputs-badge--agent">Agent·CLI</span>
+                              <span className="outputs-badge outputs-badge--agent">助手·终端</span>
                             </div>
                             <div className="sessions-list-row-preview">
                               {(o.description || '').slice(0, 200)}
@@ -691,7 +688,7 @@ export default function OutputsPage() {
                           </label>
                           {o.legacy && !o.builtin ? (
                             <p className="outputs-legacy-hint">
-                              此为旧版存储条目：保存时仅同步名称与系统提示 / CLI 模板；若要编辑完整说明，请新建输出后删除此项。
+                              旧版条目：只能改名称、说明和命令模板；要完整编辑请新建一条再删这条。
                             </p>
                           ) : null}
                           {(o.builtin || !o.legacy) && (
@@ -742,7 +739,7 @@ export default function OutputsPage() {
                           <div className="outputs-expand-section">
                             <h3 className="outputs-expand-section-title">投递与连接</h3>
                             <label className="outputs-expand-label">
-                              投递类型
+                              类型
                               <select
                                 className="sessions-filter-select outputs-expand-select"
                                 value={draft.deliveryType}
@@ -828,7 +825,7 @@ export default function OutputsPage() {
 
                             {!['http', 'xiaoai', 'agent_chat', 'command'].includes(draft.deliveryType) ? (
                               <label className="outputs-expand-label">
-                                扩展（JSON 对象）
+                                扩展（高级，键值对象）
                                 <textarea
                                   className="outputs-expand-textarea outputs-expand-textarea--mono"
                                   rows={4}
@@ -841,7 +838,7 @@ export default function OutputsPage() {
                             {draft.deliveryType === 'command' ? (
                               <>
                                 <label className="outputs-expand-label">
-                                  CLI 命令模板（旧）
+                                  旧版命令模板
                                   <textarea
                                     className="outputs-expand-textarea outputs-expand-textarea--mono"
                                     rows={3}
@@ -870,9 +867,7 @@ export default function OutputsPage() {
                               onChange={(next) => setDraft((d) => ({ ...d, targetEnv: next }))}
                               lead={
                                 draft.deliveryType === 'http' ? (
-                                  <>
-                                    随请求附加 <code className="settings-code">X-Reso-Target-Env</code>；对方需允许该头。
-                                  </>
+                                  <>网络目标会把这里填的变量一并带给对方（一般不用改）。</>
                                 ) : undefined
                               }
                             />
@@ -884,7 +879,7 @@ export default function OutputsPage() {
                             <OutputVoiceControlSection
                               value={draft.voiceControl}
                               onChange={(next) => setDraft((d) => ({ ...d, voiceControl: next }))}
-                              lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
+                              lead="说话识别到本目标时：自动发或只等你点发送。"
                             />
                           </div>
                         ) : null}
@@ -940,8 +935,8 @@ export default function OutputsPage() {
           if (!next) setModalOpen(false);
         }}
         titleId="outputs-modal-title"
-        title="新建输出"
-        description="将出现在目标列表与工作台模式选择中，仅保存在本机浏览器。"
+        title="新建目标"
+        description="会出现在目标列表和工作台里，只存在本机浏览器。"
         contentClassName="modal-card--wide sm:max-w-[min(96vw,720px)]"
       >
         <form onSubmit={submitModal} className="modal-form">
@@ -965,7 +960,7 @@ export default function OutputsPage() {
                 />
               </label>
               <label className="modal-label">
-                投递类型
+                类型
                 <select
                   className="modal-input"
                   value={modalDraft.deliveryType}
@@ -1073,9 +1068,7 @@ export default function OutputsPage() {
                   onChange={(next) => setModalDraft((d) => ({ ...d, targetEnv: next }))}
                   lead={
                     modalDraft.deliveryType === 'http' ? (
-                      <>
-                        随 POST 附加 <code className="settings-code">X-Reso-Target-Env</code>；注意 CORS。
-                      </>
+                      <>网络目标会把这里填的变量一并带给对方（一般不用改）。</>
                     ) : undefined
                   }
                 />
@@ -1084,7 +1077,7 @@ export default function OutputsPage() {
                 <OutputVoiceControlSection
                   value={modalDraft.voiceControl}
                   onChange={(next) => setModalDraft((d) => ({ ...d, voiceControl: next }))}
-                  lead="工作台在本目标下识别时，按此处规则自动提交或仅手动发送。"
+                  lead="说话识别到本目标时：自动发或只等你点发送。"
                 />
               </div>
               <div className="modal-actions">

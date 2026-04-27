@@ -241,7 +241,7 @@ export function addCustomHttpMode({
   const n = (name || '').trim();
   if (!n) throw new Error('请填写模式名称');
   const url = (requestUrl || '').trim();
-  if (!url) throw new Error('请填写 HTTP 请求 URL');
+  if (!url) throw new Error('请填写请求地址');
   const id = newOutputId();
   const proto = httpProtocol === 'agui' ? 'agui' : 'openai_chat';
   addCustomOutput({
@@ -252,9 +252,7 @@ export function addCustomHttpMode({
     deliveryType: 'http',
     requestUrl: url,
     outputShape:
-      proto === 'agui'
-        ? 'AGUI：默认发送 { user_message, session_id }（可按需在后端适配）。'
-        : 'OpenAI Chat 兼容：{ model?, messages: [{ role, content }] }。',
+      proto === 'agui' ? '流式多事件：带用户话和会话编号。' : '常见聊天：带模型与消息列表。',
     extensions: { httpProtocol: proto, requestUrl: url },
   });
   return { modes: getAllModes(), newId: id };
@@ -282,8 +280,7 @@ export function addCustomXiaoaiMode({
     description: '',
     deliveryType: 'xiaoai',
     requestUrl: '（本机）拼指令并复制到剪贴板',
-    outputShape:
-      '尖括号占位可在目标管理中配置系统/自定义；亦支持 {{paragraph}}、{{sessionId}}、{{workspace}} 等。',
+    outputShape: '尖括号在「目标」里逐项填；也可用 {{paragraph}} 等占位词。',
     extensions: {
       commandTemplate: tmpl,
       angleSlots: mergeAngleSlotsWithDefaults(tmpl, slotSeed),

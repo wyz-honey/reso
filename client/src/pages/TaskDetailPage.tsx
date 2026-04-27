@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { apiDeleteTask, apiUpdateTask, fetchTask, type TaskRecord } from '../api';
+import { listAllOutputs } from '../outputCatalog';
 import '../App.css';
+
+type TaskOutputOption = { id: string; name?: string };
 
 const STATUS_LABEL: Record<string, string> = {
   draft: '草稿',
@@ -12,21 +15,13 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: '已取消',
 };
 
-function isoToDatetimeLocal(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function datetimeLocalToIso(local: string): string | null {
-  const t = local.trim();
-  if (!t) return null;
-  const d = new Date(t);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
+const CRON_PRESETS: { label: string; expr: string }[] = [
+  { label: '每小时', expr: '0 * * * *' },
+  { label: '每天 9:00', expr: '0 9 * * *' },
+  { label: '工作日 9:00', expr: '0 9 * * 1-5' },
+  { label: '每周一 9:00', expr: '0 9 * * 1' },
+  { label: '每月 1 日 9:00', expr: '0 9 1 * *' },
+];
 
 function formatShort(iso: string | null) {
   if (!iso) return '—';
@@ -48,14 +43,21 @@ export default function TaskDetailPage() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [instruction, setInstruction] = useState('');
+  const [detail, setDetail] = useState('');
   const [status, setStatus] = useState('draft');
   const [tagsLine, setTagsLine] = useState('');
-  const [expectedAt, setExpectedAt] = useState('');
-  const [scheduledAt, setScheduledAt] = useState('');
   const [targetOutputId, setTargetOutputId] = useState('');
-  const [batchKey, setBatchKey] = useState('');
+  const [executionMode, setExecutionMode] = useState<'immediate' | 'cron'>('immediate');
+  const [scheduleCron, setScheduleCron] = useState('');
+  const [outputRows, setOutputRows] = useState<TaskOutputOption[]>(() => listAllOutputs() as TaskOutputOption[]);
+
+  useEffect(() => {
+    const fn = () => setOutputRows(listAllOutputs() as TaskOutputOption[]);
+    window.addEventListener('reso-outputs-changed', fn);
+    return () => window.removeEventListener('reso-outputs-changed', fn);
+  }, []);
+
+  const outputIdSet = useMemo(() => new Set(outputRows.map((o) => o.id)), [outputRows]);
 
   const load = useCallback(async () => {
     const id = String(taskId || '').trim();
@@ -70,14 +72,15 @@ export default function TaskDetailPage() {
       const row = await fetchTask(id);
       setTask(row);
       setName(row.name || '');
-      setDescription(row.description || '');
-      setInstruction(row.instruction || '');
+      const d = (row.description || '').trim() || (row.instruction || '').trim();
+      setDetail(d);
       setStatus(row.status || 'draft');
       setTagsLine((row.tags || []).join(', '));
-      setExpectedAt(isoToDatetimeLocal(row.expected_at));
-      setScheduledAt(isoToDatetimeLocal(row.scheduled_at));
-      setTargetOutputId(row.target_output_id || '');
-      setBatchKey(row.batch_key || '');
+      setTargetOutputId((row.target_output_id || '').trim());
+      const cron = (row.schedule_cron || '').trim();
+      setExecutionMode(cron ? 'cron' : 'immediate');
+      setScheduleCron(cron);
+      setOutputRows(listAllOutputs() as TaskOutputOption[]);
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
       setTask(null);
@@ -106,8 +109,18 @@ export default function TaskDetailPage() {
     if (!taskId?.trim()) return;
     setMsg('');
     const nm = name.trim();
-    if (!nm || !instruction.trim()) {
-      setMsg('名称与可执行指令不能为空');
+    const det = detail.trim();
+    if (!nm || !det) {
+      setMsg('名称与详细不能为空');
+      return;
+    }
+    if (executionMode === 'cron' && !scheduleCron.trim()) {
+      setMsg('Cron 模式下请填写表达式或点选快捷方案');
+      return;
+    }
+    const tid = targetOutputId.trim();
+    if (tid && !outputIdSet.has(tid)) {
+      setMsg('执行目标须从当前目标列表中选择');
       return;
     }
     setBusy(true);
@@ -118,14 +131,12 @@ export default function TaskDetailPage() {
         .filter(Boolean);
       await apiUpdateTask(taskId, {
         name: nm,
-        description,
-        instruction,
+        description: det,
+        instruction: det,
         status,
         tags,
-        expected_at: datetimeLocalToIso(expectedAt),
-        scheduled_at: datetimeLocalToIso(scheduledAt),
-        target_output_id: targetOutputId.trim() || null,
-        batch_key: batchKey.trim() || null,
+        target_output_id: tid || null,
+        schedule_cron: executionMode === 'cron' ? scheduleCron.trim() : null,
       });
       setMsg('已保存');
       await load();
@@ -176,6 +187,7 @@ export default function TaskDetailPage() {
             <h1 className="sessions-title">{task.name}</h1>
             <p className="sessions-subtitle">
               状态 {STATUS_LABEL[task.status] || task.status} · 更新 {formatShort(task.updated_at)}
+              {task.schedule_cron ? ` · Cron ${task.schedule_cron}` : ''}
             </p>
           </div>
           <div className="sessions-filter-actions">
@@ -189,11 +201,11 @@ export default function TaskDetailPage() {
 
         <div className="task-detail-nav-card">
           <div className="task-detail-nav-row">
-            <span className="sessions-filter-label">导航路径</span>
+            <span className="sessions-filter-label">页面路径</span>
             <code className="task-detail-code">{task.nav_path}</code>
           </div>
           <div className="task-detail-nav-row">
-            <span className="sessions-filter-label">完整 URL</span>
+            <span className="sessions-filter-label">分享链接</span>
             <code className="task-detail-code task-detail-code--break">{absoluteUrl}</code>
           </div>
           <div className="task-detail-nav-actions">
@@ -201,45 +213,118 @@ export default function TaskDetailPage() {
               type="button"
               className="btn-sessions-refresh"
               disabled={busy}
-              onClick={() => copyText(absoluteUrl, '已复制完整 URL')}
+              onClick={() => copyText(absoluteUrl, '已复制链接')}
             >
-              复制 URL
+              复制链接
             </button>
             <button
               type="button"
               className="btn-sessions-refresh"
               disabled={busy}
-              onClick={() => copyText(task.instruction, '已复制可执行指令')}
+              onClick={() => copyText(task.instruction, '已复制详细')}
             >
-              复制指令
+              复制详细
             </button>
           </div>
         </div>
 
         <form className="task-detail-form" onSubmit={onSave}>
           <label className="modal-label">
-            业务名称
+            名称
             <input className="modal-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={200} />
           </label>
           <label className="modal-label">
-            描述
-            <textarea
-              className="modal-textarea"
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </label>
-          <label className="modal-label">
-            可执行指令
+            详细
             <textarea
               className="modal-textarea quick-inputs-modal-textarea"
               rows={12}
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
               spellCheck={false}
             />
           </label>
+
+          <fieldset className="modal-label" style={{ border: 'none', padding: 0, margin: 0 }}>
+            <legend className="sessions-filter-label" style={{ marginBottom: '0.35rem' }}>
+              执行设置
+            </legend>
+            <label className="modal-label">
+              执行目标（来自当前目标列表）
+              <select
+                className="modal-input"
+                value={targetOutputId}
+                onChange={(e) => setTargetOutputId(e.target.value)}
+              >
+                <option value="">（不绑定）</option>
+                {outputRows.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name || o.id} — {o.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="modal-label" style={{ marginTop: '0.25rem' }}>
+              <span className="sessions-filter-label" style={{ display: 'block', marginBottom: '0.35rem' }}>
+                执行方式
+              </span>
+              <label className="sessions-inline-check" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="radio"
+                  name="task-detail-exec"
+                  checked={executionMode === 'immediate'}
+                  onChange={() => {
+                    setExecutionMode('immediate');
+                    setScheduleCron('');
+                  }}
+                />
+                非 Cron 定时（不保存 Cron 表达式）
+              </label>
+              <label
+                className="sessions-inline-check"
+                style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.35rem' }}
+              >
+                <input
+                  type="radio"
+                  name="task-detail-exec"
+                  checked={executionMode === 'cron'}
+                  onChange={() => setExecutionMode('cron')}
+                />
+                按 Cron 表达式定时
+              </label>
+            </div>
+            {executionMode === 'cron' ? (
+              <div style={{ marginTop: '0.5rem' }}>
+                <label className="modal-label">
+                  Cron 表达式
+                  <input
+                    className="modal-input"
+                    value={scheduleCron}
+                    onChange={(e) => setScheduleCron(e.target.value)}
+                    placeholder="分 时 日 月 周"
+                    spellCheck={false}
+                  />
+                </label>
+                <p className="modal-desc" style={{ marginTop: '0.35rem' }}>
+                  快捷：
+                  {CRON_PRESETS.map((p) => (
+                    <button
+                      key={p.expr}
+                      type="button"
+                      className="btn-sessions-refresh"
+                      style={{ marginRight: '0.35rem', marginTop: '0.25rem' }}
+                      onClick={() => {
+                        setScheduleCron(p.expr);
+                        setExecutionMode('cron');
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </p>
+              </div>
+            ) : null}
+          </fieldset>
+
           <label className="modal-label">
             状态
             <select className="modal-input" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -251,46 +336,15 @@ export default function TaskDetailPage() {
             </select>
           </label>
           <label className="modal-label">
-            Tags（逗号分隔）
+            标签（逗号分隔）
             <input className="modal-input" value={tagsLine} onChange={(e) => setTagsLine(e.target.value)} />
           </label>
-          <label className="modal-label">
-            期望完成
-            <input
-              className="modal-input"
-              type="datetime-local"
-              value={expectedAt}
-              onChange={(e) => setExpectedAt(e.target.value)}
-            />
-          </label>
-          <label className="modal-label">
-            定时执行（预留）
-            <input
-              className="modal-input"
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-            />
-          </label>
-          <label className="modal-label">
-            默认目标 output id
-            <input
-              className="modal-input"
-              value={targetOutputId}
-              onChange={(e) => setTargetOutputId(e.target.value)}
-            />
-          </label>
-          <label className="modal-label">
-            批次键 batch_key
-            <input
-              className="modal-input"
-              value={batchKey}
-              onChange={(e) => setBatchKey(e.target.value)}
-              maxLength={200}
-            />
-          </label>
           <p className="sessions-muted task-detail-meta">
-            创建 {formatShort(task.created_at)} · 来源段落 id {task.source_paragraph_id || '—'}
+            创建 {formatShort(task.created_at)}
+            {task.source_paragraph_id ? ' · 来自会话' : ''}
+            {task.expected_at ? ` · 期望 ${formatShort(task.expected_at)}` : ''}
+            {task.scheduled_at ? ` · 计划 ${formatShort(task.scheduled_at)}` : ''}
+            {task.batch_key ? ` · 批次 ${task.batch_key}` : ''}
           </p>
           <div className="modal-actions">
             <button type="button" className="btn-danger-text" disabled={busy} onClick={onDelete}>
