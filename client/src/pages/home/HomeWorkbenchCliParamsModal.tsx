@@ -9,6 +9,7 @@ import {
   CURSOR_AGENT_MODEL_SELECT_OTHER,
   cursorAgentModelSelectValue,
 } from '../../cursorAgentModels';
+import { cursorTriadFieldByLabel } from '../../cursorTriad';
 
 export default function HomeWorkbenchCliParamsModal({
   open,
@@ -44,18 +45,21 @@ export default function HomeWorkbenchCliParamsModal({
               </p>
             ) : (
               cursorWorkbenchTriadLabels.map((lab) => {
+                const triadField = cursorTriadFieldByLabel(lab);
                 const meta =
-                  lab === '模型'
+                  triadField === 'model'
                     ? { title: '--model（CLI 模型 id）', ph: '与 `agent models` 中 id 一致' }
-                    : lab === '工作空间'
+                    : triadField === 'workspace'
                       ? {
                           title: '工作空间（编程目录）',
                           ph: cliWorkspaceFallbackStr.trim()
                             ? `未填目标路径时用服务端：${cliWorkspaceFallbackStr}`
                             : '/path/to/your/repo',
                         }
-                      : { title: '输出路径（模板自定义）', ph: '按您在目标详情中的占位含义填写' };
-                if (lab === '模型') {
+                      : triadField === 'outputPath'
+                        ? { title: '输出路径（模板自定义）', ph: '按您在目标详情中的占位含义填写' }
+                        : { title: `${lab}（模板占位）`, ph: '按模板占位含义填写' };
+                if (triadField === 'model') {
                   const raw = cursorTriadInputs[lab] || '';
                   const sel = cursorAgentModelSelectValue(raw);
                   return (

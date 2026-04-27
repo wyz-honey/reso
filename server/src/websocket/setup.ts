@@ -7,6 +7,7 @@ import { resolveDashscopeApiKey } from '~/services/dashscopeChat.ts';
 import {
   ensureCliWorkbenchSessionOutputDir,
   readCursorSessionFilesSync,
+  resolveLatestCliWorkbenchAssistantTurnDir,
   type CliWorkbenchKind,
 } from '~/services/cursorPaths.ts';
 import {
@@ -350,16 +351,17 @@ export function attachWebSockets(httpServer: Server): {
         return;
       }
       stopWatch();
-      let dirAbs: string;
+      let sessionDirAbs: string;
       try {
-        dirAbs = ensureCliWorkbenchSessionOutputDir(sid, cliKind);
+        sessionDirAbs = ensureCliWorkbenchSessionOutputDir(sid, cliKind);
       } catch (e) {
         safeSend({ type: 'error', message: e instanceof Error ? e.message : 'mkdir failed' });
         return;
       }
 
       const pushIfChanged = () => {
-        const { info, error } = readCursorSessionFilesSync(dirAbs);
+        const latestDir = resolveLatestCliWorkbenchAssistantTurnDir(sid, cliKind);
+        const { info, error } = latestDir ? readCursorSessionFilesSync(latestDir) : { info: '', error: '' };
         const sig = `${info.length}\0${error.length}\0${info}\0${error}`;
         if (sig === lastSentSig) return;
         lastSentSig = sig;
@@ -377,7 +379,7 @@ export function attachWebSockets(httpServer: Server): {
       pushIfChanged();
 
       try {
-        dirWatcher = fs.watch(dirAbs, { persistent: false }, () => {
+        dirWatcher = fs.watch(sessionDirAbs, { persistent: false }, () => {
           schedulePush();
         });
       } catch (e) {

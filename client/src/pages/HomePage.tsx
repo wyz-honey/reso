@@ -15,6 +15,7 @@ import {
   fetchCliWorkbenchChat,
   fetchCursorRunStatus,
   fetchCursorSessionPaths,
+  fetchSessionExternalThreads,
 } from '../api';
 import { cliEnvForApi, normalizeCliEnvRecord } from '../cliEnv';
 import AssistantMarkdown from '../components/AssistantMarkdown';
@@ -87,7 +88,6 @@ import {
 } from '../cursorTriad';
 import CursorCliStructuredView from '../components/CursorCliStructuredView';
 import CursorWorkbenchDbAssistantBody from './home/CursorWorkbenchDbAssistantBody';
-import { AppModalShell } from '@/components/ui/AppModalShell';
 import {
   looksLikeCursorStreamJson,
   parseCliOutputForDelivery,
@@ -119,7 +119,7 @@ import {
   IconContext,
 } from './home/HomeWorkbenchIcons';
 import HomeWorkbenchAddModeModal from './home/HomeWorkbenchAddModeModal';
-import HomeWorkbenchCliParamsModal from './home/HomeWorkbenchCliParamsModal';
+import HomeWorkbenchModals from './home/HomeWorkbenchModals';
 import { useHomeWorkbenchBootstrap } from './home/useHomeWorkbenchBootstrap';
 import { useHomeWorkbenchEditor } from './home/useHomeWorkbenchEditor';
 import { useHomeWorkbenchModesStore } from '../stores/homeWorkbenchModesStore';
@@ -128,14 +128,13 @@ import { useWorkbenchNavigationGuardStore } from '../stores/workbenchNavigationG
 import { useHomeWorkbenchRuntimeStore } from '../stores/homeWorkbenchRuntimeStore';
 
 export default function HomePage() {
-  const [quickInputsModalOpen, setQuickInputsModalOpen] = useState(false);
   const modes = useHomeWorkbenchModesStore((s) => s.modes);
   const setModes = useHomeWorkbenchModesStore((s) => s.setModes);
   const activeModeId = useHomeWorkbenchModesStore((s) => s.activeModeId);
   const setActiveModeId = useHomeWorkbenchModesStore((s) => s.setActiveModeId);
 
-  const cliParamsModalOpen = useHomeWorkbenchUiStore((s) => s.cliParamsModalOpen);
   const setCliParamsModalOpen = useHomeWorkbenchUiStore((s) => s.setCliParamsModalOpen);
+  const setQuickInputsModalOpen = useHomeWorkbenchUiStore((s) => s.setQuickInputsModalOpen);
   const openAddCustomModeModal = useHomeWorkbenchUiStore((s) => s.openAddCustomModeModal);
 
   const {
@@ -642,23 +641,24 @@ export default function HomePage() {
     let cancelled = false;
     setCursorEnsureStatus('loading');
     setCursorEnsureErrorMsg('');
-    const envPayload = cliEnvPayloadForEnsureRef.current;
-    apiEnsureSessionExternalThread(
-      asrSessionId,
-      prov,
-      envPayload ? { cliEnv: envPayload } : undefined
-    )
-      .then(({ threadId, created }) => {
+    cursorOmitResumeNextInvokeRef.current = false;
+    fetchSessionExternalThreads(asrSessionId)
+      .then((rows) => {
         if (cancelled) return;
-        cursorOmitResumeNextInvokeRef.current = Boolean(created);
-        setExternalThreadsByProvider({ [prov]: threadId });
+        const mapped = rows.reduce((acc, row) => {
+          const p = String(row.provider || '').trim();
+          const tid = String(row.threadId || '').trim();
+          if (p && tid) acc[p] = tid;
+          return acc;
+        }, {});
+        setExternalThreadsByProvider(mapped);
         setCursorEnsureStatus('ok');
       })
       .catch((e) => {
         if (cancelled) return;
         cursorOmitResumeNextInvokeRef.current = false;
         setCursorEnsureStatus('error');
-        setCursorEnsureErrorMsg(e.message || '准备失败');
+        setCursorEnsureErrorMsg(e.message || '加载关联失败');
         setExternalThreadsByProvider({});
       });
     return () => {
@@ -1817,15 +1817,13 @@ export default function HomePage() {
     if (activeMode.cliVariant === 'qoder') {
       let paths = cursorSessionFilePaths;
       const qFetchKey = `${sid}:qoder`;
-      if (cursorPathsFetchKeyRef.current !== qFetchKey || !paths?.infoTxtAbs) {
-        statusHint('正在解析 Qoder 输出路径…');
-        try {
-          paths = await fetchCursorSessionPaths(sid, 'qoder');
-          setCursorSessionFilePaths(paths);
-          cursorPathsFetchKeyRef.current = qFetchKey;
-        } catch (e) {
-          return { ok: false, error: e.message || '解析输出路径失败' };
-        }
+      statusHint('正在解析 Qoder 输出路径…');
+      try {
+        paths = await fetchCursorSessionPaths(sid, 'qoder');
+        setCursorSessionFilePaths(paths);
+        cursorPathsFetchKeyRef.current = qFetchKey;
+      } catch (e) {
+        return { ok: false, error: e.message || '解析输出路径失败' };
       }
       const qProv = QODER_EXTERNAL_THREAD_PROVIDER;
       let threadId = String((externalThreadsByProvider[qProv] || '').trim());
@@ -1857,15 +1855,13 @@ export default function HomePage() {
 
     let paths = cursorSessionFilePaths;
     const cFetchKey = `${sid}:cursor`;
-    if (cursorPathsFetchKeyRef.current !== cFetchKey || !paths?.infoTxtAbs) {
-      statusHint('正在解析 Cursor 输出路径…');
-      try {
-        paths = await fetchCursorSessionPaths(sid, 'cursor');
-        setCursorSessionFilePaths(paths);
-        cursorPathsFetchKeyRef.current = cFetchKey;
-      } catch (e) {
-        return { ok: false, error: e.message || '解析输出路径失败' };
-      }
+    statusHint('正在解析 Cursor 输出路径…');
+    try {
+      paths = await fetchCursorSessionPaths(sid, 'cursor');
+      setCursorSessionFilePaths(paths);
+      cursorPathsFetchKeyRef.current = cFetchKey;
+    } catch (e) {
+      return { ok: false, error: e.message || '解析输出路径失败' };
     }
 
     let threadId = String((externalThreadsByProvider[prov] || '').trim());
@@ -1910,18 +1906,22 @@ export default function HomePage() {
       setStatus('请先输入内容再复制指令');
       return false;
     }
-    let sid = dbSessionIdRef.current;
+    const sid = dbSessionIdRef.current ? String(dbSessionIdRef.current).trim() : '';
     let paths = cursorSessionFilePaths;
-    let threadId = cursorResolvedExternalThreadId;
-    if (activeMode.cliVariant === 'cursor' || activeMode.cliVariant === 'qoder') {
-      const p = await provisionCursorWorkbenchCli();
-      if (!p.ok) {
-        setStatus(`${p.error}，再复制指令`);
+    const threadId = cursorResolvedExternalThreadId;
+    if (
+      sid &&
+      (activeMode.cliVariant === 'cursor' || activeMode.cliVariant === 'qoder') &&
+      (!paths?.infoTxtAbs || cursorPathsFetchKeyRef.current !== `${sid}:${activeMode.cliVariant}`)
+    ) {
+      try {
+        paths = await fetchCursorSessionPaths(sid, activeMode.cliVariant === 'qoder' ? 'qoder' : 'cursor');
+        setCursorSessionFilePaths(paths);
+        cursorPathsFetchKeyRef.current = `${sid}:${activeMode.cliVariant}`;
+      } catch (e) {
+        setStatus(`${e.message || '解析输出路径失败'}，再复制指令`);
         return false;
       }
-      sid = p.sid;
-      paths = p.paths;
-      threadId = p.threadId;
     }
     const computed = consumeCursorOmitResumeAndBuildCommand(
       activeMode,
@@ -1939,7 +1939,7 @@ export default function HomePage() {
     setCopyBusy(true);
     try {
       await navigator.clipboard.writeText(computed.cmd);
-      setStatus('复制成功到剪贴板');
+      setStatus('复制成功');
       return true;
     } catch {
       setStatus('剪贴板写入失败');
@@ -2647,15 +2647,17 @@ export default function HomePage() {
                 <div
                   className={`editor-textarea-wrap editor-textarea-wrap--fill ${isAgent || isCliWorkbench ? 'editor-textarea-wrap--agent' : ''}`}
                 >
-                  <button
-                    type="button"
-                    className="btn-editor-clear"
-                    onClick={clearEditor}
-                    title="清空编辑区"
-                    aria-label="清空编辑区"
-                  >
-                    清空
-                  </button>
+                  {isAsr ? (
+                    <button
+                      type="button"
+                      className="btn-editor-clear"
+                      onClick={clearEditor}
+                      title="清空编辑区"
+                      aria-label="清空编辑区"
+                    >
+                      清空
+                    </button>
+                  ) : null}
                   <textarea
                     ref={editorTextareaRef}
                     className="editor"
@@ -3269,22 +3271,18 @@ export default function HomePage() {
                     {asrSessionId &&
                     SESSION_UUID_RE.test(String(asrSessionId)) &&
                     !cursorQuietPrepare &&
-                    (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
+                    cursorEnsureStatus === 'error' ? (
                       <div className="cursor-external-thread-panel">
-                        {cursorEnsureStatus === 'loading' ? (
-                          <p className="cursor-external-thread-status">正在准备…</p>
-                        ) : (
-                          <div className="cursor-external-thread-error-block">
-                            <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
-                            <button
-                              type="button"
-                              className="btn-editor-secondary"
-                              onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
-                            >
-                              重试
-                            </button>
-                          </div>
-                        )}
+                        <div className="cursor-external-thread-error-block">
+                          <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
+                          <button
+                            type="button"
+                            className="btn-editor-secondary"
+                            onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
+                          >
+                            重试
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                     <div
@@ -3381,22 +3379,18 @@ export default function HomePage() {
                 {asrSessionId &&
                 SESSION_UUID_RE.test(String(asrSessionId)) &&
                 !cursorQuietPrepare &&
-                (cursorEnsureStatus === 'loading' || cursorEnsureStatus === 'error') ? (
+                cursorEnsureStatus === 'error' ? (
                   <div className="cursor-external-thread-panel">
-                    {cursorEnsureStatus === 'loading' ? (
-                      <p className="cursor-external-thread-status">正在准备…</p>
-                    ) : (
-                      <div className="cursor-external-thread-error-block">
-                        <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
-                        <button
-                          type="button"
-                          className="btn-editor-secondary"
-                          onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
-                        >
-                          重试
-                        </button>
-                      </div>
-                    )}
+                    <div className="cursor-external-thread-error-block">
+                      <p className="sessions-error sessions-alert">{cursorEnsureErrorMsg}</p>
+                      <button
+                        type="button"
+                        className="btn-editor-secondary"
+                        onClick={() => setCursorEnsureRetryNonce((n) => n + 1)}
+                      >
+                        重试
+                      </button>
+                    </div>
                   </div>
                 ) : null}
                 <div className="agent-messages" ref={cursorPanelScrollRef}>
@@ -3474,9 +3468,10 @@ export default function HomePage() {
         ) : null}
       </div>
 
-      <HomeWorkbenchCliParamsModal
-        open={cliParamsModalOpen && isCli}
-        onClose={() => setCliParamsModalOpen(false)}
+      <HomeWorkbenchModals
+        isCli={isCli}
+        quickInputs={quickInputs}
+        insertQuickContent={insertQuickContent}
         isCliWorkbench={isCliWorkbench}
         isXiaoaiCli={isXiaoaiCli}
         cursorWorkbenchTriadLabels={cursorWorkbenchTriadLabels}
@@ -3489,35 +3484,6 @@ export default function HomePage() {
         onCliAngleSlotsChange={onCliAngleSlotsChange}
         applyWorkbenchCliExample={applyWorkbenchCliExample}
       />
-
-      <AppModalShell
-        open={quickInputsModalOpen}
-        onOpenChange={setQuickInputsModalOpen}
-        titleId="quick-input-select-title"
-        title="选择上下文"
-        description="点击一个标签将内容插入编辑区。"
-      >
-        <div className="quick-input-select-list" role="toolbar" aria-label="快捷上下文选择">
-          {quickInputs.map((q) => (
-            <button
-              key={q.id}
-              type="button"
-              className="quick-input-tag"
-              title={
-                q.content && q.content.length > 100
-                  ? `${q.content.slice(0, 100)}…`
-                  : q.content || q.label
-              }
-              onClick={() => {
-                insertQuickContent(q.content);
-                setQuickInputsModalOpen(false);
-              }}
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
-      </AppModalShell>
 
       <HomeWorkbenchAddModeModal
         customModes={customModes}

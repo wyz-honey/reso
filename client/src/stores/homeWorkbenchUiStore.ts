@@ -5,6 +5,7 @@ type AnglePreset = unknown;
 type State = {
   modeModalOpen: boolean;
   cliParamsModalOpen: boolean;
+  quickInputsModalOpen: boolean;
   newModeName: string;
   newModeKind: string;
   newHttpUrl: string;
@@ -13,6 +14,7 @@ type State = {
   newCliAngleSlotsPreset: AnglePreset | null;
   setModeModalOpen: (v: boolean) => void;
   setCliParamsModalOpen: (v: boolean) => void;
+  setQuickInputsModalOpen: (v: boolean) => void;
   setNewModeName: (v: string) => void;
   setNewModeKind: (v: string) => void;
   setNewHttpUrl: (v: string) => void;
@@ -28,6 +30,7 @@ type State = {
 export const useHomeWorkbenchUiStore = create<State>((set) => ({
   modeModalOpen: false,
   cliParamsModalOpen: false,
+  quickInputsModalOpen: false,
   newModeName: '',
   newModeKind: 'http',
   newHttpUrl: '',
@@ -36,6 +39,7 @@ export const useHomeWorkbenchUiStore = create<State>((set) => ({
   newCliAngleSlotsPreset: null,
   setModeModalOpen: (v) => set({ modeModalOpen: v }),
   setCliParamsModalOpen: (v) => set({ cliParamsModalOpen: v }),
+  setQuickInputsModalOpen: (v) => set({ quickInputsModalOpen: v }),
   setNewModeName: (v) => set({ newModeName: v }),
   setNewModeKind: (v) => set({ newModeKind: v }),
   setNewHttpUrl: (v) => set({ newHttpUrl: v }),

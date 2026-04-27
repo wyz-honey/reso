@@ -29,6 +29,17 @@ export function resolveCliWorkbenchSessionDirAbs(sessionId: string, kind: CliWor
   return path.join(getCliWorkbenchOutputRoot(kind), sid);
 }
 
+function formatTurnTimestamp(d = new Date()): string {
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(
+    d.getMinutes()
+  )}${pad(d.getSeconds())}-${pad(d.getMilliseconds(), 3)}`;
+}
+
+function uniqueAssistantTurnDirName(): string {
+  return `assistant-${formatTurnTimestamp()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 export function resolveCursorSessionDirAbs(sessionId: string): string {
   return resolveCliWorkbenchSessionDirAbs(sessionId, 'cursor');
 }
@@ -41,6 +52,36 @@ export function ensureCliWorkbenchSessionOutputDir(
   const dirAbs = resolveCliWorkbenchSessionDirAbs(sessionId, kind);
   fs.mkdirSync(dirAbs, { recursive: true });
   return dirAbs;
+}
+
+/** 每次发送前分配一个独立轮次目录：outputs/<kind>/<sessionId>/assistant-<ts>-<rand>/ */
+export function ensureCliWorkbenchAssistantTurnOutputDir(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): string {
+  const sessionDir = ensureCliWorkbenchSessionOutputDir(sessionId, kind);
+  const turnDir = path.join(sessionDir, uniqueAssistantTurnDirName());
+  fs.mkdirSync(turnDir, { recursive: true });
+  return turnDir;
+}
+
+/** 会话下最新 assistant 轮次目录（按目录名倒序）；不存在返回 null */
+export function resolveLatestCliWorkbenchAssistantTurnDir(
+  sessionId: string,
+  kind: CliWorkbenchKind = 'cursor'
+): string | null {
+  const sessionDir = ensureCliWorkbenchSessionOutputDir(sessionId, kind);
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(sessionDir);
+  } catch {
+    return null;
+  }
+  const latest = names
+    .filter((n) => /^assistant-\d{8}-\d{6}-\d{3}-[a-z0-9]{4}$/i.test(n))
+    .sort()
+    .at(-1);
+  return latest ? path.join(sessionDir, latest) : null;
 }
 
 /** @deprecated 使用 ensureCliWorkbenchSessionOutputDir(sessionId, 'cursor') */

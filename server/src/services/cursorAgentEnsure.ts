@@ -74,7 +74,7 @@ async function runAgentCreateChat(
     }
     if (isCreateChatTimeoutErr(e)) {
       throw new AppError(
-        `agent create-chat 超时（当前上限 ${timeoutMs / 1000}s）。若本机 Cursor CLI 冷启动较慢，可在服务端设置 RESO_CURSOR_CREATE_CHAT_TIMEOUT_MS（毫秒，范围 30000～900000）后重试`,
+        `agent create-chat 超时（当前上限 ${timeoutMs / 1000}s）`,
         504
       );
     }

@@ -19,7 +19,7 @@
   padding: 1.35rem 0 1.5rem;
   background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
   border-right: 1px solid var(--border);
-  transition: width 0.22s ease, padding 0.22s ease;
+  transition: none;
 }
 
 .shell.shell--nav-collapsed .sidebar {
@@ -2148,7 +2148,7 @@ a.sessions-list-row {
 
 .sessions-org-detail-split {
   flex-shrink: 0;
-  border-top: 1px solid var(--border-strong);
+  border-top: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.02), transparent);
 }
 
@@ -2348,10 +2348,10 @@ a.sessions-list-row {
 
 .sessions-list-panel {
   background: var(--bg-card);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2384,7 +2384,7 @@ a.sessions-list-row {
   font-weight: 700;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+  background: transparent;
 }
 
 .sessions-list {
@@ -4515,7 +4515,7 @@ a.outputs-list-row--link:hover {
   height: 7.25rem;
   box-sizing: border-box;
   padding: 0.65rem 0.8rem;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.02);
   box-shadow: var(--shadow-sm);

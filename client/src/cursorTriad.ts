@@ -37,9 +37,23 @@ function defaultCliWorkbenchTemplate(mode: Record<string, unknown> | null | unde
 
 export const CURSOR_TRIAD_LABELS = ['模型', '工作空间', '输出路径'] as const;
 
+export type CursorTriadField = 'model' | 'workspace' | 'outputPath';
+
+function triadFieldByLabel(label: unknown): CursorTriadField | null {
+  const s = String(label || '').trim();
+  if (!s) return null;
+  if (/模型|model/i.test(s)) return 'model';
+  if (/工作空间|工作区|workspace|repo/i.test(s)) return 'workspace';
+  if (/输出路径|output|stdout|stderr|info\.txt|error\.txt/i.test(s)) return 'outputPath';
+  return null;
+}
+
+export function cursorTriadFieldByLabel(label: unknown): CursorTriadField | null {
+  return triadFieldByLabel(label);
+}
+
 export function cursorTriadLabelsInTemplate(template: unknown): string[] {
-  const inTmpl = new Set(uniqueAngleLabelsInOrder(String(template ?? '')));
-  return CURSOR_TRIAD_LABELS.filter((lab) => inTmpl.has(lab));
+  return uniqueAngleLabelsInOrder(String(template ?? '')).filter((lab) => triadFieldByLabel(lab));
 }
 
 export function getMergedCursorSlots(mode: Record<string, unknown> | null | undefined): AngleSlot[] {
@@ -59,7 +73,7 @@ export function cursorTriadCustomValues(mode: Record<string, unknown> | null | u
   const slots = getMergedCursorSlots(mode);
   const tmpl = (mode?.cliTemplate as string) || defaultCliWorkbenchTemplate(mode);
   const labels = cursorTriadLabelsInTemplate(tmpl);
-  const out: Record<string, string> = { 模型: '', 工作空间: '', 输出路径: '' };
+  const out: Record<string, string> = {};
   for (const lab of labels) {
     const s = slots.find((x) => x.label === lab);
     if (s?.source === 'custom') out[lab] = String(s.customValue ?? '');
@@ -162,10 +176,20 @@ const TRIAD_HINT: Record<string, string> = {
   输出路径: '输出路径（若模板含该占位）',
 };
 
+function triadHintForLabel(label: string): string {
+  const byPreset = TRIAD_HINT[label];
+  if (byPreset) return byPreset;
+  const field = triadFieldByLabel(label);
+  if (field === 'model') return `${label}（模型参数）`;
+  if (field === 'workspace') return `${label}（工作空间路径）`;
+  if (field === 'outputPath') return `${label}（输出路径）`;
+  return label;
+}
+
 export function cursorTriadFillHint(template: unknown): string {
   const labs = cursorTriadLabelsInTemplate(template);
   if (!labs.length) return '';
-  return `请补全：${labs.map((l) => TRIAD_HINT[l] || l).join('、')}`;
+  return `请补全：${labs.map((l) => triadHintForLabel(l)).join('、')}`;
 }
 
 export function cursorCliFillHint(

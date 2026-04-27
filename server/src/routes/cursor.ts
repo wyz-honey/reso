@@ -1,7 +1,7 @@
 import path from 'path';
 import { Router } from 'express';
 import {
-  ensureCliWorkbenchSessionOutputDir,
+  ensureCliWorkbenchAssistantTurnOutputDir,
   getCliWorkbenchOutputRoot,
   type CliWorkbenchKind,
 } from '~/services/cursorPaths.ts';
@@ -68,7 +68,7 @@ export function createCursorRouter(): Router {
     const root = getCliWorkbenchOutputRoot(cliKind);
     let dirAbs: string;
     try {
-      dirAbs = ensureCliWorkbenchSessionOutputDir(sid, cliKind);
+      dirAbs = ensureCliWorkbenchAssistantTurnOutputDir(sid, cliKind);
     } catch (e) {
       return res.status(500).json({
         error: e instanceof Error ? e.message : 'Failed to create cursor output directory',

@@ -290,12 +290,12 @@ function formatSystemValue(field: string, ctx: CliContext): string {
       return safeWorkspaceToken(workspace);
     case 'cursorStdout': {
       const p = String(cursorStdoutAbsPath || '').trim();
-      if (!p) return '';
+      if (!p) return '<输出正常信息地址>';
       return shellQuoteSingle(p);
     }
     case 'cursorStderr': {
       const p = String(cursorStderrAbsPath || '').trim();
-      if (!p) return '';
+      if (!p) return '<输出错误信息地址>';
       return shellQuoteSingle(p);
     }
     case 'externalThread': {
